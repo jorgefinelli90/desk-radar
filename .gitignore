@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+build/
+*.o
+include/secrets.h
+credentials*.json
