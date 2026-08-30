@@ -77,6 +77,8 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
     return false;
   }
 
+  http.setTimeout(15000); // OpenSky a veces tarda varios segundos
+
   http.addHeader("Authorization", "Bearer " + _accessToken);
 
   int code = http.GET();
@@ -86,24 +88,25 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
     return false;
   }
 
-  // Respuesta puede ser grande: usamos filtro para quedarnos solo con lo que
-  // necesitamos y no reventar la RAM del C3.
-  JsonDocument filter;
-  filter["states"][0][0] = true; // icao24
-  filter["states"][0][1] = true; // callsign
-  filter["states"][0][5] = true; // lon
-  filter["states"][0][6] = true; // lat
-  filter["states"][0][7] = true; // baro_altitude
-  filter["states"][0][8] = true; // on_ground
-  filter["states"][0][9] = true; // velocity
+  // OpenSky responde con Transfer-Encoding: chunked, y HTTPClient::getStream()
+  // entrega el socket TCP crudo: los headers de chunk ("16c5\r\n...") viajan
+  // dentro del stream y ArduinoJson muere en el primer byte. El que desarma el
+  // chunked es writeToStream(), que es justamente lo que usa getString().
+  // Por eso el token funcionaba (usa getString) y los aviones no aparecian.
+  //
+  // Sin filtro a proposito: filtrar un array de arrays reindexa las columnas y
+  // rompia lat/lon/altitud. Estos bounding boxes devuelven unos pocos KB.
+  String payload = http.getString();
+  http.end();
 
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream());
-  http.end();
+  DeserializationError err = deserializeJson(doc, payload);
 
   if (err) {
     Serial.print("[OpenSky] Error parseando states: ");
     Serial.println(err.c_str());
+    Serial.print("[OpenSky] Payload recibido: ");
+    Serial.println(payload.substring(0, 120));
     return false;
   }
 

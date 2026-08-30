@@ -3,16 +3,46 @@
 #include <math.h>
 #include <algorithm>
 
+// Paleta de 16 colores del disco (sprite a 4 bpp). El orden tiene que coincidir
+// exactamente con el enum de índices de RadarScreen.h.
+//
+// Los 7 verdes del trail son verde puro con el canal G subiendo de 9 a 45 sobre
+// 63: en RGB565 el verde ocupa los bits 5..10, así que el color es (G << 5).
+static const uint16_t RADAR_PALETTE[16] = {
+  0x0000, // 0  C_BG      negro
+  0x01C0, // 1  C_RING    anillos (verde apagado)
+  0x2104, // 2  C_CROSS   cruz N-S / E-O (gris oscuro)
+  0x0120, // 3  C_TRAIL0  estela, la banda más tenue
+  0x01E0, // 4
+  0x02A0, // 5
+  0x0360, // 6
+  0x0420, // 7
+  0x04E0, // 8
+  0x05A0, // 9  C_TRAIL_TOP  la banda más viva de la estela
+  0x8FF1, // 10 C_EDGE    borde de ataque (verde casi blanco)
+  0x07E0, // 11 C_BLIP    avión normal (verde puro, más vivo que la estela)
+  0xF800, // 12 C_ALERT   avión dentro de RADAR_NEAR_KM
+  0xFFFF, // 13 C_PING    destello de detección
+  0xFFE0, // 14 C_HOME    casa
+  0x7BEF  // 15 C_LABEL   etiquetas
+};
+
+void RadarScreen::polar(float deg, int r, int& x, int& y, int cx, int cy) {
+  float a = deg * (float)PI / 180.0f;
+  x = cx + (int)lroundf(r * sinf(a));   // 0 grados = arriba (Norte)
+  y = cy - (int)lroundf(r * cosf(a));   // y crece hacia abajo
+}
+
 const AircraftState* RadarScreen::hitTest(uint16_t x, uint16_t y) const {
-  const AircraftBlip* best = nullptr;
+  const Blip* best = nullptr;
   long bestDistSq = 0;
 
   // Si varias zonas se superponen, gana la que tenga el centro más cerca del toque
   for (const auto& b : _blips) {
-    if (!b.hitBox.contains(x, y)) continue;
+    if (!b.base.hitBox.contains(x, y)) continue;
 
-    long dx = (long)x - (b.hitBox.x + b.hitBox.w / 2);
-    long dy = (long)y - (b.hitBox.y + b.hitBox.h / 2);
+    long dx = (long)x - (b.base.hitBox.x + b.base.hitBox.w / 2);
+    long dy = (long)y - (b.base.hitBox.y + b.base.hitBox.h / 2);
     long distSq = dx * dx + dy * dy;
 
     if (!best || distSq < bestDistSq) {
@@ -21,7 +51,7 @@ const AircraftState* RadarScreen::hitTest(uint16_t x, uint16_t y) const {
     }
   }
 
-  return best ? &best->aircraft : nullptr;
+  return best ? &best->base.aircraft : nullptr;
 }
 
 bool RadarScreen::hasNearbyTraffic(const std::vector<AircraftState>& aircraft) {
@@ -31,95 +61,412 @@ bool RadarScreen::hasNearbyTraffic(const std::vector<AircraftState>& aircraft) {
   return false;
 }
 
-void RadarScreen::render(std::vector<AircraftState>& aircraft, bool fastMode) {
+void RadarScreen::onEnter() {
+  _chromeValid = false;   // venimos de otra pantalla: hay que limpiar y redibujar
+  _sweepDeg = 0;
+  _prevSweepDeg = 0;
+  _lastFrameMs = millis();
+#if RADAR_DEBUG_TIMING
+  _statsMs = millis();    // si no, el primer promedio sale sobre un tramo raro
+  _frameCount = 0;
+  _frameCostSum = 0;
+#endif
+}
+
+// Asigna el sprite del disco la primera vez. A 4 bpp son (200*200)/2 = 20 KB.
+// Un sprite de 16 bpp del mismo tamaño costaría 80 KB, demasiado para convivir
+// con el handshake TLS de OpenSky. Si la asignación falla igual seguimos
+// andando: drawDiscDirect() dibuja sin buffer.
+void RadarScreen::ensureDisc() {
+  if (_triedInit) return;
+  _triedInit = true;
+
+  _disc.setColorDepth(4);
+  if (_disc.createSprite(DISC_SIZE, DISC_SIZE) != nullptr) {
+    _disc.createPalette(RADAR_PALETTE, 16);
+    _discReady = true;
+    Serial.printf("[Radar] Sprite del disco OK (%d bytes), heap libre %u\n",
+                  (DISC_SIZE * DISC_SIZE) / 2, (unsigned)ESP.getFreeHeap());
+  } else {
+    _discReady = false;
+    Serial.printf("[Radar] Sin RAM para el sprite, voy a redibujo directo. Heap %u\n",
+                  (unsigned)ESP.getFreeHeap());
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Marco fijo: barra de estado, leyenda y panel inferior. Solo se redibuja al
+//  entrar a la pantalla, no en cada frame ni en cada refresco de datos.
+// ---------------------------------------------------------------------------
+void RadarScreen::drawChrome() {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
+  // Leyenda de colores, debajo del disco y fuera de él
+  const int legendY = 232;
+  tft.fillCircle(16, legendY, 4, TFT_GREEN);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_SILVER, TFT_BLACK);
+  tft.drawString("en rango", 26, legendY, 1);
+
+  char alertLabel[20];
+  snprintf(alertLabel, sizeof(alertLabel), "a menos de %.0f km", RADAR_NEAR_KM);
+  tft.fillCircle(104, legendY, 4, TFT_RED);
+  tft.drawString(alertLabel, 114, legendY, 1);
+
+  tft.drawFastHLine(0, 248, tft.width(), TFT_DARKGREEN);
+}
+
+void RadarScreen::drawPanel(const AircraftState* closest, int shown) {
+  TFT_eSPI& tft = _display.tft();
+
+  // Solo la franja del panel: no tocamos el disco ni la leyenda
+  tft.fillRect(0, 250, tft.width(), tft.height() - 250, TFT_BLACK);
+
+  tft.setTextDatum(TL_DATUM);
+
+  if (closest) {
+    String cs = closest->callsign.length() ? closest->callsign : closest->icao24;
+    bool near = closest->distanceKm <= RADAR_NEAR_KM;
+
+    tft.setTextColor(near ? TFT_RED : TFT_GREENYELLOW, TFT_BLACK);
+    tft.drawString(cs, 8, 254, 4);
+
+    char info[64];
+    snprintf(info, sizeof(info), "%.1f km   alt %.0f m   %.0f km/h",
+             closest->distanceKm, closest->baroAltitudeM,
+             closest->velocityMs * 3.6);
+    tft.setTextColor(TFT_SILVER, TFT_BLACK);
+    tft.drawString(info, 8, 286, 1);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("Sin trafico en rango", 8, 262, 2);
+  }
+
+  char countStr[24];
+  snprintf(countStr, sizeof(countStr), "%d en pantalla", shown);
+  tft.setTextDatum(TR_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(countStr, tft.width() - 8, 286, 1);
+}
+
+// ---------------------------------------------------------------------------
+//  render(): se llama cuando llegan datos nuevos (cada 30s o 5s). Recalcula
+//  los blips y repinta lo que no es el disco. El disco lo pinta drawFrame().
+// ---------------------------------------------------------------------------
+void RadarScreen::render(std::vector<AircraftState>& aircraft, bool fastMode) {
+  ensureDisc();
+
+  if (!_chromeValid) {
+    drawChrome();
+    _chromeValid = true;
+  }
+
   _display.showStatusBar("< HOME  RADAR", fastMode ? "RAPIDO" : "NORMAL", fastMode);
 
-  int cx = tft.width() / 2;
-  int cy = 16 + (tft.height() - 16) / 2;
-  int maxR = std::min((int)tft.width(), (int)tft.height() - 16) / 2 - 10;
-
-  // Anillos de referencia (25%, 50%, 75%, 100% del alcance)
-  tft.drawCircle(cx, cy, maxR, TFT_DARKGREEN);
-  tft.drawCircle(cx, cy, maxR * 3 / 4, TFT_DARKGREEN);
-  tft.drawCircle(cx, cy, maxR / 2, TFT_DARKGREEN);
-  tft.drawCircle(cx, cy, maxR / 4, TFT_DARKGREEN);
-
-  // Cruz de referencia N-S / E-O
-  tft.drawFastVLine(cx, cy - maxR, maxR * 2, TFT_DARKGREY);
-  tft.drawFastHLine(cx - maxR, cy, maxR * 2, TFT_DARKGREY);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString("N", cx, cy - maxR - 8, 1);
-
-  // Casa en el centro
-  tft.fillTriangle(cx - 4, cy + 4, cx + 4, cy + 4, cx, cy - 5, TFT_YELLOW);
-
-  // Ordenar por distancia y quedarnos con el más cercano para el detalle
+  // Ordenar por distancia: el primero en rango es el que va al panel inferior
   std::sort(aircraft.begin(), aircraft.end(),
             [](const AircraftState& a, const AircraftState& b) {
               return a.distanceKm < b.distanceKm;
             });
 
-  int shown = 0;
-  const AircraftState* closest = nullptr;
+  // Conservamos los pings ya disparados para que un refresco de datos no corte
+  // el destello a mitad de camino.
+  auto previousPing = [&](const String& icao) -> uint32_t {
+    for (const auto& old : _blips) {
+      if (old.base.aircraft.icao24 == icao) return old.pingMs;
+    }
+    return 0;
+  };
 
-  _blips.clear();
+  std::vector<Blip> fresh;
+  const AircraftState* closest = nullptr;
+  int shown = 0;
 
   for (auto& a : aircraft) {
     if (a.distanceKm > RADAR_RANGE_KM) continue;
     if (a.onGround) continue;
 
-    double r = (a.distanceKm / RADAR_RANGE_KM) * maxR;
-    double angleRad = (a.bearingDeg - 90) * PI / 180.0; // -90: 0 grados = arriba (Norte)
+    int r = (int)lround((a.distanceKm / RADAR_RANGE_KM) * RING_MAX);
 
-    int px = cx + (int)(r * cos(angleRad));
-    int py = cy + (int)(r * sin(angleRad));
+    Blip b;
+    b.bearing = (float)a.bearingDeg;
+    b.near = a.distanceKm <= RADAR_NEAR_KM;
+    b.pingMs = previousPing(a.icao24);
 
-    bool near = a.distanceKm <= RADAR_NEAR_KM;
-    uint16_t color = near ? TFT_RED : TFT_GREEN;
+    int lx, ly;
+    polar(b.bearing, r, lx, ly, CENTER, CENTER);
+    b.sx = (int16_t)lx;
+    b.sy = (int16_t)ly;
 
-    tft.fillCircle(px, py, near ? 4 : 3, color);
-
-    // Zona tocable más grande que el punto dibujado: con touch resistivo y
-    // dedo, un blanco de 6px es imposible de acertar.
+    // La zona tocable va en coordenadas de PANTALLA (el sprite es local), y es
+    // más grande que el punto dibujado: con touch resistivo y dedo, un blanco
+    // de 6px es imposible de acertar.
     const int TOUCH_PAD = 14;
-    AircraftBlip blip;
-    blip.hitBox = { px - TOUCH_PAD, py - TOUCH_PAD, TOUCH_PAD * 2, TOUCH_PAD * 2 };
-    blip.aircraft = a;
-    _blips.push_back(blip);
+    int scrX = DISC_X + lx;
+    int scrY = DISC_Y + ly;
+    b.base.hitBox = { scrX - TOUCH_PAD, scrY - TOUCH_PAD, TOUCH_PAD * 2, TOUCH_PAD * 2 };
+    b.base.aircraft = a;
+
+    fresh.push_back(b);
 
     if (!closest) closest = &a;
     shown++;
   }
 
-  // Panel inferior con info del avión más cercano
-  int panelY = tft.height() - 46;
-  tft.fillRect(0, panelY, tft.width(), 46, TFT_BLACK);
-  tft.drawFastHLine(0, panelY, tft.width(), TFT_DARKGREEN);
+  _blips.swap(fresh);
 
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  drawPanel(closest, shown);
 
-  if (closest) {
-    String cs = closest->callsign.length() ? closest->callsign : closest->icao24;
-    char line1[48];
-    snprintf(line1, sizeof(line1), "%s", cs.c_str());
-    tft.drawString(line1, 6, panelY + 4, 2);
+  // Sin sprite, el disco fijo (anillos, cruz, etiquetas, aviones) se pinta acá
+  // una vez por refresco; después tick() solo mueve la línea del barrido.
+  if (!_discReady) drawStaticDiscDirect();
 
-    char line2[64];
-    snprintf(line2, sizeof(line2), "%.1f km  alt %.0f m  %.0f km/h",
-              closest->distanceKm, closest->baroAltitudeM,
-              closest->velocityMs * 3.6);
-    tft.drawString(line2, 6, panelY + 24, 1);
-  } else {
-    tft.drawString("Sin trafico en rango", 6, panelY + 4, 2);
+  drawFrame();
+}
+
+// Disco completo dibujado directo sobre el TFT. Solo se usa en el fallback sin
+// sprite: acá sí hay parpadeo, pero es el precio de no tener buffer.
+void RadarScreen::drawStaticDiscDirect() {
+  TFT_eSPI& tft = _display.tft();
+  const int cx = DISC_X + CENTER;
+  const int cy = DISC_Y + CENTER;
+
+  tft.fillRect(DISC_X, DISC_Y, DISC_SIZE, DISC_SIZE, TFT_BLACK);
+
+  for (int i = 1; i <= 4; i++) {
+    tft.drawCircle(cx, cy, RING_MAX * i / 4, TFT_DARKGREEN);
+  }
+  tft.drawFastVLine(cx, cy - RING_MAX, RING_MAX * 2, TFT_DARKGREY);
+  tft.drawFastHLine(cx - RING_MAX, cy, RING_MAX * 2, TFT_DARKGREY);
+
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  for (int i = 1; i <= 4; i++) {
+    int x, y;
+    polar(45.0f, RING_MAX * i / 4, x, y, cx, cy);
+    char lbl[8];
+    snprintf(lbl, sizeof(lbl), "%.0f", RADAR_RANGE_KM * i / 4);
+    tft.drawString(lbl, x, y, 1);
+  }
+  {
+    int x, y;
+    polar(0,   CARD_R, x, y, cx, cy); tft.drawString("N", x, y, 1);
+    polar(90,  CARD_R, x, y, cx, cy); tft.drawString("E", x, y, 1);
+    polar(180, CARD_R, x, y, cx, cy); tft.drawString("S", x, y, 1);
+    polar(270, CARD_R, x, y, cx, cy); tft.drawString("O", x, y, 1);
   }
 
-  char countStr[24];
-  snprintf(countStr, sizeof(countStr), "%d aviones", shown);
-  tft.setTextDatum(TR_DATUM);
-  tft.drawString(countStr, tft.width() - 6, panelY + 4, 1);
+  for (const auto& b : _blips) {
+    tft.fillCircle(DISC_X + b.sx, DISC_Y + b.sy, b.near ? 4 : 3,
+                   b.near ? TFT_RED : TFT_GREEN);
+  }
+
+  tft.fillTriangle(cx - 4, cy + 4, cx + 4, cy + 4, cx, cy - 5, TFT_YELLOW);
+}
+
+// ---------------------------------------------------------------------------
+//  Animación
+// ---------------------------------------------------------------------------
+void RadarScreen::tick() {
+  uint32_t now = millis();
+  uint32_t dt = now - _lastFrameMs;
+  if (dt < RADAR_FRAME_MS) return;   // todavía no toca frame: volvemos ya
+
+  _lastFrameMs = now;
+
+  // El avance se calcula con el dt real, así la vuelta tarda SWEEP_PERIOD_MS
+  // aunque un frame se retrase por un fetch o por el touch.
+  if (dt > 500) dt = 500;            // tras un fetch largo, no pegar un salto feo
+  _prevSweepDeg = _sweepDeg;
+  _sweepDeg += 360.0f * (float)dt / (float)RADAR_SWEEP_PERIOD_MS;
+  while (_sweepDeg >= 360.0f) _sweepDeg -= 360.0f;
+
+  updatePings();
+
+#if RADAR_DEBUG_TIMING
+  uint32_t t0 = micros();
+  drawFrame();
+  uint32_t cost = micros() - t0;
+
+  _frameCostSum += cost;
+  _frameCount++;
+  if (now - _statsMs >= 2000) {
+    Serial.printf("[Radar] %u fps, %.1f ms por frame, %.1f grados por frame\n",
+                  (unsigned)_frameCount / 2,
+                  _frameCostSum / 1000.0f / _frameCount,
+                  360.0f * (2000.0f / _frameCount) / RADAR_SWEEP_PERIOD_MS);
+    _statsMs = now;
+    _frameCount = 0;
+    _frameCostSum = 0;
+  }
+#else
+  drawFrame();
+#endif
+}
+
+// Marca los aviones que el barrido acaba de cruzar en este frame.
+void RadarScreen::updatePings() {
+  float p = _prevSweepDeg;
+  float c = _sweepDeg;
+  uint32_t now = millis();
+
+  for (auto& b : _blips) {
+    bool crossed;
+    if (p <= c) {
+      crossed = (b.bearing > p && b.bearing <= c);
+    } else {
+      // el barrido pasó por 360/0 en este frame
+      crossed = (b.bearing > p || b.bearing <= c);
+    }
+    if (crossed) b.pingMs = now;
+  }
+}
+
+void RadarScreen::drawFrame() {
+  if (_discReady) drawDiscSprite();
+  else            drawDiscDirect();
+}
+
+// --- Camino normal: componer todo el disco en RAM y volcarlo de una ---------
+void RadarScreen::drawDiscSprite() {
+  TFT_eSprite& s = _disc;
+  uint32_t now = millis();
+
+  s.fillSprite(C_BG);
+
+  // Anillos de alcance
+  for (int i = 1; i <= 4; i++) {
+    s.drawCircle(CENTER, CENTER, RING_MAX * i / 4, C_RING);
+  }
+
+  // Cruz de referencia
+  s.drawFastVLine(CENTER, CENTER - RING_MAX, RING_MAX * 2, C_CROSS);
+  s.drawFastHLine(CENTER - RING_MAX, CENTER, RING_MAX * 2, C_CROSS);
+
+  // Estela del barrido: cuñas de brillo creciente hacia el borde de ataque.
+  // Cada cuña es un triángulo centro-borde; con 10 grados de ancho el error
+  // contra el arco real es de ~0.3 px, invisible a este radio.
+  // Se dibujan de la más tenue a la más viva a propósito: las cuñas se solapan
+  // 0.6 grados para que no queden costuras negras entre bandas, y así el solape
+  // lo gana siempre la banda más brillante.
+  const float step = (float)RADAR_TRAIL_DEG / RADAR_TRAIL_STEPS;
+  for (int i = RADAR_TRAIL_STEPS - 1; i >= 0; i--) {
+    float a1 = _sweepDeg - step * i;
+    float a0 = a1 - step - 0.6f;
+    int x0, y0, x1, y1;
+    polar(a0, RING_MAX, x0, y0, CENTER, CENTER);
+    polar(a1, RING_MAX, x1, y1, CENTER, CENTER);
+    s.fillTriangle(CENTER, CENTER, x0, y0, x1, y1,
+                   C_TRAIL_TOP - i);  // i=0 es la banda pegada al barrido
+  }
+
+  // Borde de ataque
+  {
+    int ex, ey;
+    polar(_sweepDeg, RING_MAX, ex, ey, CENTER, CENTER);
+    s.drawLine(CENTER, CENTER, ex, ey, C_EDGE);
+  }
+
+  // Etiquetas de distancia sobre la diagonal NE, para no pisar la cruz.
+  // Van después del barrido para que sigan legibles cuando pasa por encima.
+  s.setTextDatum(MC_DATUM);
+  s.setTextColor(C_LABEL);
+  for (int i = 1; i <= 4; i++) {
+    int r = RING_MAX * i / 4;
+    int lx, ly;
+    polar(45.0f, r, lx, ly, CENTER, CENTER);
+    char lbl[8];
+    snprintf(lbl, sizeof(lbl), "%.0f", RADAR_RANGE_KM * i / 4);
+    s.drawString(lbl, lx, ly, 1);
+  }
+  // "km" una sola vez, pegado al anillo exterior
+  {
+    int lx, ly;
+    polar(45.0f, RING_MAX, lx, ly, CENTER, CENTER);
+    s.drawString("km", lx + 14, ly, 1);
+  }
+
+  // Puntos cardinales
+  {
+    int x, y;
+    polar(0,   CARD_R, x, y, CENTER, CENTER); s.drawString("N", x, y, 1);
+    polar(90,  CARD_R, x, y, CENTER, CENTER); s.drawString("E", x, y, 1);
+    polar(180, CARD_R, x, y, CENTER, CENTER); s.drawString("S", x, y, 1);
+    polar(270, CARD_R, x, y, CENTER, CENTER); s.drawString("O", x, y, 1);
+  }
+
+  // Aviones, encima del barrido para que nunca queden tapados
+  for (const auto& b : _blips) {
+    uint8_t base = b.near ? C_ALERT : C_BLIP;
+    int radius = b.near ? 4 : 3;
+
+    uint32_t age = now - b.pingMs;
+    if (b.pingMs != 0 && age < RADAR_PING_MS) {
+      // Destello de detección: crece y se apaga hasta volver al estado normal
+      float t = 1.0f - (float)age / (float)RADAR_PING_MS;   // 1 -> 0
+      radius += (int)lroundf(3.0f * t);
+      if (t > 0.55f) base = C_PING;
+
+      // Halo que se expande y desaparece
+      int halo = radius + 3 + (int)lroundf(6.0f * (1.0f - t));
+      s.drawCircle(b.sx, b.sy, halo, t > 0.3f ? C_TRAIL_TOP : C_TRAIL0 + 2);
+    }
+
+    s.fillCircle(b.sx, b.sy, radius, base);
+  }
+
+  // Casa en el centro
+  s.fillTriangle(CENTER - 4, CENTER + 4, CENTER + 4, CENTER + 4,
+                 CENTER, CENTER - 5, C_HOME);
+
+  s.pushSprite(DISC_X, DISC_Y);
+}
+
+// --- Fallback sin sprite: redibujar solo lo que cambia ----------------------
+// Si no hubo RAM para el buffer, animamos igual con un barrido de una sola
+// línea (sin estela): borramos la línea anterior en negro, re-estampamos los
+// anillos y la cruz en los puntos que tapaba, y dibujamos la nueva.
+void RadarScreen::drawDiscDirect() {
+  TFT_eSPI& tft = _display.tft();
+  const int cx = DISC_X + CENTER;
+  const int cy = DISC_Y + CENTER;
+
+  auto ray = [&](float deg, uint16_t color) {
+    int x, y;
+    polar(deg, RING_MAX, x, y, cx, cy);
+    tft.drawLine(cx, cy, x, y, color);
+  };
+
+  // Marco fijo la primera vez (o después de volver de otra pantalla)
+  if (!_chromeValid) return; // render() todavía no corrió
+
+  ray(_prevSweepDeg, TFT_BLACK);
+
+  // Re-estampar los cruces con los anillos y con la cruz que acabamos de borrar
+  for (int i = 1; i <= 4; i++) {
+    int x, y;
+    polar(_prevSweepDeg, RING_MAX * i / 4, x, y, cx, cy);
+    tft.drawPixel(x, y, TFT_DARKGREEN);
+  }
+  {
+    int x, y;
+    polar(_prevSweepDeg, RING_MAX, x, y, cx, cy);
+    // el eje vertical/horizontal solo se toca cerca de los múltiplos de 90
+    float m = fmodf(_prevSweepDeg, 90.0f);
+    if (m < 3.0f || m > 87.0f) {
+      tft.drawLine(cx, cy, x, y, TFT_DARKGREY);
+    }
+  }
+
+  // Los aviones que la línea pudo haber tapado
+  for (const auto& b : _blips) {
+    float d = fabsf(b.bearing - _prevSweepDeg);
+    if (d > 180.0f) d = 360.0f - d;
+    if (d > 6.0f) continue;
+    tft.fillCircle(DISC_X + b.sx, DISC_Y + b.sy, b.near ? 4 : 3,
+                   b.near ? TFT_RED : TFT_GREEN);
+  }
+
+  ray(_sweepDeg, TFT_GREEN);
 }

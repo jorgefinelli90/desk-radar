@@ -2,7 +2,7 @@
 #include "DisplayManager.h"
 #include "UiRect.h"
 
-enum class HomeChoice { None, Radar, Airports, Map };
+enum class HomeChoice { None, Radar, Airports, Map, Info };
 
 class HomeScreen {
   public:
@@ -16,4 +16,5 @@ class HomeScreen {
     UiRect _radarBtn;
     UiRect _airportBtn;
     UiRect _mapBtn;
+    UiRect _infoBtn;
 };
