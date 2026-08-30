@@ -17,6 +17,15 @@ static const uint32_t REFRESH_FAST_MS    = 5000;  // refresco cuando hay tráfic
 // --- Bounding box para /states/all en modo radar ---
 // Se calcula en runtime a partir de HOME_LAT/HOME_LON + RADAR_RANGE_KM (ver GeoUtils)
 
+// --- Mapa de la provincia de Buenos Aires (modo "Mapa BA") ---
+// Bounding box que cubre toda la provincia (de Patagones al sur hasta el
+// límite con Santa Fe/Córdoba al norte, de La Pampa al Atlántico).
+static const double MAP_BA_LAT_MIN = -41.10; // sur  (Carmen de Patagones)
+static const double MAP_BA_LAT_MAX = -33.20; // norte (límite con Santa Fe)
+static const double MAP_BA_LON_MIN = -63.50; // oeste (límite con La Pampa)
+static const double MAP_BA_LON_MAX = -56.60; // este  (costa atlántica)
+static const uint32_t REFRESH_MAP_MS = 45000; // refresco del mapa (zona grande, se mueve poco a esta escala)
+
 // --- Aeropuertos fijos para el modo "Aeropuertos" ---
 struct AirportDef {
   const char* icao;

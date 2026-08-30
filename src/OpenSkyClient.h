@@ -10,6 +10,7 @@ struct AircraftState {
   double  lon;
   double  baroAltitudeM;
   double  velocityMs;
+  double  trackDeg;      // true_track: rumbo real del avión (0-360, 0 = Norte)
   bool    onGround;
 
   // Calculados respecto a un punto de referencia (se llenan después de parsear)

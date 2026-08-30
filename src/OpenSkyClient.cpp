@@ -96,6 +96,7 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
   filter["states"][0][7] = true; // baro_altitude
   filter["states"][0][8] = true; // on_ground
   filter["states"][0][9] = true; // velocity
+  filter["states"][0][10] = true; // true_track
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, http.getStream(),
@@ -123,6 +124,7 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
     a.baroAltitudeM = s[7] | 0.0;
     a.onGround      = s[8] | false;
     a.velocityMs    = s[9] | 0.0;
+    a.trackDeg      = s[10] | 0.0;
 
     if (a.lat == 0.0 && a.lon == 0.0) continue; // sin posición válida
 

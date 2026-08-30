@@ -11,7 +11,7 @@ void DetailScreen::render(const AircraftState& a) {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
-  _display.showStatusBar("< VOLVER AL RADAR", "", false);
+  _display.showStatusBar("< VOLVER", "", false);
 
   String cs = a.callsign.length() ? a.callsign : a.icao24;
 

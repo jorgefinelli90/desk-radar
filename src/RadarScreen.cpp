@@ -4,7 +4,7 @@
 #include <algorithm>
 
 const AircraftState* RadarScreen::hitTest(uint16_t x, uint16_t y) const {
-  const RadarBlip* best = nullptr;
+  const AircraftBlip* best = nullptr;
   long bestDistSq = 0;
 
   // Si varias zonas se superponen, gana la que tenga el centro más cerca del toque
@@ -39,7 +39,7 @@ void RadarScreen::render(std::vector<AircraftState>& aircraft, bool fastMode) {
 
   int cx = tft.width() / 2;
   int cy = 16 + (tft.height() - 16) / 2;
-  int maxR = std::min(tft.width(), tft.height() - 16) / 2 - 10;
+  int maxR = std::min((int)tft.width(), (int)tft.height() - 16) / 2 - 10;
 
   // Anillos de referencia (25%, 50%, 75%, 100% del alcance)
   tft.drawCircle(cx, cy, maxR, TFT_DARKGREEN);
@@ -86,7 +86,7 @@ void RadarScreen::render(std::vector<AircraftState>& aircraft, bool fastMode) {
     // Zona tocable más grande que el punto dibujado: con touch resistivo y
     // dedo, un blanco de 6px es imposible de acertar.
     const int TOUCH_PAD = 14;
-    RadarBlip blip;
+    AircraftBlip blip;
     blip.hitBox = { px - TOUCH_PAD, py - TOUCH_PAD, TOUCH_PAD * 2, TOUCH_PAD * 2 };
     blip.aircraft = a;
     _blips.push_back(blip);

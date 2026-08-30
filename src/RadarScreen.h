@@ -2,16 +2,7 @@
 #include <vector>
 #include "DisplayManager.h"
 #include "OpenSkyClient.h"
-
-#include "UiRect.h"
-
-// Un avión dibujado en pantalla, con su zona tocable y una copia de sus datos.
-// Guardamos copia (y no puntero) porque la lista de aviones se reemplaza
-// entera en cada fetch, y el detalle tiene que seguir siendo válido después.
-struct RadarBlip {
-  UiRect hitBox;
-  AircraftState aircraft;
-};
+#include "AircraftBlip.h"
 
 class RadarScreen {
   public:
@@ -29,5 +20,5 @@ class RadarScreen {
 
   private:
     DisplayManager& _display;
-    std::vector<RadarBlip> _blips; // se rellena en cada render()
+    std::vector<AircraftBlip> _blips; // se rellena en cada render()
 };

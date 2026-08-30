@@ -11,9 +11,10 @@
 #include "HomeScreen.h"
 #include "RadarScreen.h"
 #include "AirportScreen.h"
+#include "MapScreen.h"
 #include "DetailScreen.h"
 
-enum class Mode { Home, Radar, Airports, Detail };
+enum class Mode { Home, Radar, Airports, Map, Detail };
 
 DisplayManager display;
 TouchManager   touch(display.tft());
@@ -21,9 +22,11 @@ OpenSkyClient  opensky(OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET);
 HomeScreen     homeScreen(display);
 RadarScreen    radarScreen(display);
 AirportScreen  airportScreen(display);
+MapScreen      mapScreen(display);
 DetailScreen   detailScreen(display);
 
 Mode currentMode = Mode::Home;
+Mode detailReturnMode = Mode::Radar; // a qué pantalla volver al salir del Detail
 int  currentAirportIdx = 0;
 
 // Copia del avión que se está viendo en modo Detail
@@ -64,6 +67,11 @@ void fetchForCurrentMode() {
     if (opensky.fetchStates(box, aircraft)) {
       enrichWithGeo(aircraft, HOME_LAT, HOME_LON);
     }
+  } else if (currentMode == Mode::Map) {
+    GeoUtils::BBox box { MAP_BA_LAT_MIN, MAP_BA_LAT_MAX, MAP_BA_LON_MIN, MAP_BA_LON_MAX };
+    if (opensky.fetchStates(box, aircraft)) {
+      enrichWithGeo(aircraft, HOME_LAT, HOME_LON); // distancia a casa: la usa el color y el detalle
+    }
   } else if (currentMode == Mode::Airports) {
     const AirportDef& ap = AIRPORTS[currentAirportIdx];
     auto box = GeoUtils::boundingBox(ap.lat, ap.lon, ap.boxRadiusKm);
@@ -80,6 +88,8 @@ void renderCurrentMode() {
     homeScreen.render();
   } else if (currentMode == Mode::Radar) {
     radarScreen.render(aircraft, fastMode);
+  } else if (currentMode == Mode::Map) {
+    mapScreen.render(aircraft);
   } else if (currentMode == Mode::Detail) {
     detailScreen.render(selectedAircraft);
   } else {
@@ -119,17 +129,19 @@ void loop() {
       } else if (choice == HomeChoice::Airports) {
         currentAirportIdx = 0;
         enterMode(Mode::Airports);
+      } else if (choice == HomeChoice::Map) {
+        enterMode(Mode::Map);
       }
     }
     delay(30);
     return;
   }
 
-  // En Detail: cualquier toque vuelve al radar. La pantalla queda congelada
-  // (no se refresca sola) para poder leer la ficha con tranquilidad.
+  // En Detail: cualquier toque vuelve a la pantalla de origen (radar o mapa).
+  // La ficha queda congelada (no se refresca sola) para leerla con tranquilidad.
   if (currentMode == Mode::Detail) {
     if (tapped) {
-      currentMode = Mode::Radar;
+      currentMode = detailReturnMode;
       renderCurrentMode();
     }
     delay(30);
@@ -143,11 +155,14 @@ void loop() {
     return;
   }
 
-  // En Radar: tocar un avión abre su ficha de detalle
-  if (tapped && currentMode == Mode::Radar) {
-    const AircraftState* hit = radarScreen.hitTest(tx, ty);
+  // En Radar o Mapa: tocar un avión abre su ficha de detalle
+  if (tapped && (currentMode == Mode::Radar || currentMode == Mode::Map)) {
+    const AircraftState* hit = (currentMode == Mode::Radar)
+                                 ? radarScreen.hitTest(tx, ty)
+                                 : mapScreen.hitTest(tx, ty);
     if (hit) {
       selectedAircraft = *hit; // copia: sobrevive al próximo fetch
+      detailReturnMode = currentMode;
       currentMode = Mode::Detail;
       renderCurrentMode();
       delay(30);
@@ -165,9 +180,13 @@ void loop() {
     return;
   }
 
-  // Refresco adaptativo: más rápido si hay tráfico cerca de casa (solo en modo Radar)
+  // Refresco adaptativo: más rápido si hay tráfico cerca de casa (solo en modo Radar).
+  // El mapa provincial se mueve poco a esa escala, así que refresca más lento.
   fastMode = (currentMode == Mode::Radar) && RadarScreen::hasNearbyTraffic(aircraft);
-  uint32_t interval = fastMode ? REFRESH_FAST_MS : REFRESH_NORMAL_MS;
+  uint32_t interval;
+  if (currentMode == Mode::Map)   interval = REFRESH_MAP_MS;
+  else if (fastMode)              interval = REFRESH_FAST_MS;
+  else                            interval = REFRESH_NORMAL_MS;
 
   if (millis() - lastFetch >= interval) {
     if (WiFi.status() != WL_CONNECTED) {
