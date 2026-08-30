@@ -6,6 +6,14 @@
 //  CONFIGURACIÓN GENERAL - Flight Radar de escritorio
 // ============================================================
 
+// --- Orientación de la pantalla ---
+// Rotación de TFT_eSPI: 0 = vertical (conector abajo), 2 = vertical girada 180
+// (conector arriba). 1 y 3 son los dos horizontales. Todas las pantallas del
+// proyecto están pensadas para vertical (240x320), así que usá 0 o 2.
+// OJO: la calibración del touch depende de la rotación. TouchManager guarda con
+// qué rotación calibró y vuelve a correr el wizard solo si cambiás este valor.
+static const uint8_t SCREEN_ROTATION = 2;
+
 // --- Ubicación de referencia (tu casa) ---
 static const double HOME_LAT = -34.5858006;
 static const double HOME_LON = -58.5917033;
@@ -16,17 +24,16 @@ static const double RADAR_NEAR_KM        = 10.0;  // distancia bajo la cual se c
 static const uint32_t REFRESH_NORMAL_MS  = 30000; // refresco normal (30s)
 static const uint32_t REFRESH_FAST_MS    = 5000;  // refresco cuando hay tráfico cercano (5s)
 
-// --- Bounding box para /states/all en modo radar ---
-// Se calcula en runtime a partir de HOME_LAT/HOME_LON + RADAR_RANGE_KM (ver GeoUtils)
-
-// --- Mapa de la provincia de Buenos Aires (modo "Mapa BA") ---
-// Bounding box que cubre toda la provincia (de Patagones al sur hasta el
-// límite con Santa Fe/Córdoba al norte, de La Pampa al Atlántico).
-static const double MAP_BA_LAT_MIN = -41.10; // sur  (Carmen de Patagones)
-static const double MAP_BA_LAT_MAX = -33.20; // norte (límite con Santa Fe)
-static const double MAP_BA_LON_MIN = -63.50; // oeste (límite con La Pampa)
-static const double MAP_BA_LON_MAX = -56.60; // este  (costa atlántica)
-static const uint32_t REFRESH_MAP_MS = 45000; // refresco del mapa (zona grande, se mueve poco a esta escala)
+// --- Bounding box compartido por Radar y Mapa ---
+// Radar y Mapa miran la misma zona, así que hacen UN SOLO fetch a OpenSky y
+// comparten el vector de aviones: cambiar de una pantalla a la otra no dispara
+// una request nueva.
+//
+// 45 km de radio cubre a la vez el radio de 40 km del radar y el recorte del
+// mapa en modo lejano (80 km de ancho x 87,3 km de alto, ver src/MapAssets.h).
+// Si tocás el viewport del mapa en tools/build-map.mjs, revisá que este radio
+// siga alcanzando.
+static const double HOME_FETCH_RADIUS_KM = 45.0;
 
 // --- Aeropuertos fijos para el modo "Aeropuertos" ---
 struct AirportDef {

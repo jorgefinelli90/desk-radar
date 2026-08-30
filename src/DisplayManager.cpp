@@ -1,8 +1,9 @@
 #include "DisplayManager.h"
+#include "config.h"
 
 void DisplayManager::begin() {
   _tft.init();
-  _tft.setRotation(0); // 240x320 vertical. Poner 1 o 3 si preferís horizontal.
+  _tft.setRotation(SCREEN_ROTATION); // ver config.h (0/2 = vertical, 1/3 = horizontal)
   _tft.fillScreen(TFT_BLACK);
 }
 

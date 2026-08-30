@@ -1,7 +1,7 @@
 # Flight Radar de escritorio (ESP32 WROOM/WROVER + TFT 2.4" táctil)
 
 MVP de un radar de vuelos casero: muestra tráfico aéreo cerca de tu casa
-(modo Radar), sobre la provincia de Buenos Aires (modo Mapa) o cerca de
+(modo Radar), sobre un mapa realista de tu zona (modo Mapa) o cerca de
 aeropuertos elegidos (modo Aeropuertos), usando la API gratuita de
 [OpenSky Network](https://opensky-network.org/).
 
@@ -45,19 +45,31 @@ más ahí).
    generados en tu cuenta OpenSky → *My OpenSky* → *API Client*). Para la
    pantalla de noticias también hace falta una API key de GNews (ver
    [APIs usadas](#apis-usadas)); el clima no necesita ninguna.
-3. Conectá el ESP32 y compilá/subí:
+3. Generá el mapa del modo Mapa (una sola vez, o cada vez que muevas el área):
    ```bash
-   pio run -t upload
+   cd tools && npm install && node build-map.mjs && cd ..
+   ```
+4. Conectá el ESP32 y subí el mapa y el firmware:
+   ```bash
+   pio run -t uploadfs   # los mapas (data/*.bin) -> particion spiffs
+   pio run -t upload     # el firmware
    pio device monitor
    ```
+   El `uploadfs` va una sola vez; después alcanza con `upload` salvo que
+   regeneres el mapa.
+5. Si la pantalla te queda cabeza abajo (depende de cómo montes el módulo),
+   cambiá `SCREEN_ROTATION` en `include/config.h`: `0` es vertical con el
+   conector abajo y `2` es la misma vertical girada 180°. Al arrancar con un
+   valor distinto al que ya estaba, el wizard de calibración táctil se vuelve
+   a correr solo (la calibración vieja no sirve para la orientación nueva).
 
 ## Cómo funciona
 
 - **Al encender**: si es la primera vez, corre un wizard de calibración
   táctil (te pide tocar 3 cruces). Se guarda en la memoria NVS del ESP32,
-  así que solo pasa una vez.
+  así que solo pasa una vez (y se repite si cambiás `SCREEN_ROTATION`).
 - **Pantalla Home**: cuatro botones grandes — "RADAR", "AEROPUERTOS",
-  "MAPA BA" y "MÁS INFO". Tocás el que quieras y entra directo a esa pantalla
+  "MAPA" y "MÁS INFO". Tocás el que quieras y entra directo a esa pantalla
   (con fetch inmediato).
 - **Modo Radar**: pantalla circular centrada en tu casa
   (`-34.5858006, -58.5917033`), radio 40 km, con barrido animado tipo radar
@@ -70,6 +82,15 @@ más ahí).
   pasa a cada 5s automáticamente si detecta un avión a menos de 10 km. La
   animación es independiente del ciclo de fetch: el barrido sigue girando
   sobre la última posición conocida aunque no lleguen datos nuevos.
+- **Modo Mapa**: mapa oscuro **realista** de tu zona (calles, rutas, nombres de
+  localidades) con los aviones encima como siluetas rotadas según su rumbo real
+  y coloreadas por altitud, con la misma rampa que usa FlightRadar24: naranja
+  abajo → amarillo → verde → cian arriba. Abajo hay una barra de gradiente que
+  explica la escala. El callsign se muestra solo para el avión más cercano a
+  casa (con diez etiquetas encima el mapa se vuelve ilegible); el resto se
+  consulta tocándolos. Un botón abajo alterna entre **80 km y 40 km** de ancho.
+  El fondo no se descarga: es una imagen pre-renderizada que vive en la flash
+  (ver [Mapa](#mapa-pre-renderizado)).
 - **Detalle de avión**: tocá cualquier punto del radar y se abre su ficha
   (callsign, ICAO24, distancia, rumbo cardinal, altitud, velocidad,
   coordenadas). La zona tocable es más grande que el punto dibujado, así que
@@ -114,7 +135,10 @@ flight-radar-esp32/
 │   ├── TouchManager.{h,cpp}    # calibración táctil persistente + detección de tap
 │   ├── HomeScreen.{h,cpp}      # menú principal con los cuatro botones
 │   ├── RadarScreen.{h,cpp}     # radar circular + hit-test de aviones
-│   ├── MapScreen.{h,cpp}       # mapa de la provincia de Buenos Aires
+│   ├── MapScreen.{h,cpp}       # mapa realista + aviones por altitud + zoom
+│   ├── MapTiles.{h,cpp}        # lectura del mapa raster desde LittleFS
+│   ├── GeoMap.h                # proyeccion Web Mercator lat/lon -> pixel
+│   ├── MapAssets.h             # GENERADO por build-map.mjs (no editar)
 │   ├── DetailScreen.{h,cpp}    # ficha de un avión tocado en el radar
 │   ├── AirportScreen.{h,cpp}   # dibujo de la lista por aeropuerto
 │   ├── InfoMenuScreen.{h,cpp}  # sub-menú "MÁS INFO" (Noticias / Clima)
@@ -124,8 +148,107 @@ flight-radar-esp32/
 │   ├── WeatherScreen.{h,cpp}   # clima actual + íconos dibujados a mano
 │   ├── TextUtils.h             # UTF-8 → ASCII, recorte y wrap por ancho
 │   └── UiRect.h                # helper de hit-testing para zonas táctiles
+├── data/                    # se sube con "pio run -t uploadfs", no con el firmware
+│   ├── map80.bin            # mapa 80 km, RGB565 crudo (GENERADO)
+│   └── map40.bin            # mapa 40 km, RGB565 crudo (GENERADO)
+├── tools/
+│   ├── build-map.mjs        # baja los tiles y genera los .bin + MapAssets.h
+│   └── verify-map.mjs       # marca puntos conocidos para validar la proyección
 └── README.md
 ```
+
+## Mapa pre-renderizado
+
+El fondo del modo Mapa **no se descarga en la placa**: es una imagen raster
+generada una sola vez en la PC y guardada en la flash del ESP32.
+
+### Regenerarlo
+
+```bash
+cd tools
+npm install            # solo la primera vez
+node build-map.mjs     # baja tiles, genera data/*.bin y src/MapAssets.h
+node verify-map.mjs    # opcional: marca aeropuertos para chequear la proyección
+cd ..
+pio run -t uploadfs    # sube los mapas a la partición spiffs
+pio run -t upload      # sube el firmware
+```
+
+Mirá `tools/preview80.png` y `preview40.png` antes de flashear: es exactamente
+lo que va a verse en la pantalla.
+
+**Para mover el área**, cambiá `HOME_LAT`/`HOME_LON` arriba de `build-map.mjs`
+(y en `include/config.h`, que tienen que coincidir) y volvé a correrlo.
+
+### Por qué pre-renderizado y no tiles en vivo
+
+| Enfoque | RAM | Veredicto |
+|---|---|---|
+| Sprite de pantalla completa 16 bpp | 150 KB | no entra (WROOM sin PSRAM) |
+| Tiles PNG descargados y decodificados en la placa | ~40 KB por decode | 2-5 s por tile, y hay que cachear igual |
+| **Raster pre-renderizado en flash** | ~8 KB de buffer de banda | **elegido** |
+| Vectorial dibujado a mano | casi nada | no se parece a un mapa real |
+
+Como el área es fija, todo el trabajo pesado (bajar, pegar, recortar, reducir)
+se hace en la PC y el ESP32 solo hace `pushImage`.
+
+Cada `.bin` son 240 × 262 × 2 = **125.760 bytes**; los dos suman 251 KB de la
+partición `spiffs` de 1,375 MB, que hasta ahora estaba totalmente vacía. No hace
+falta cambiar el esquema de particiones.
+
+### Geometría
+
+| Modo | Zoom | m/px nativo | m/px final | Fuente | Factor | Cobertura |
+|---|---|---|---|---|---|---|
+| 80 km | 9 | 251,7 | 333,3 | 318×347 | 0,755 | 80 × 87,3 km |
+| 40 km | 10 | 125,9 | 166,7 | 318×347 | 0,755 | 40 × 43,7 km |
+
+Los zooms nativos de OSM no caen justo en 80/40 km, así que se baja a mayor
+resolución y se reduce con Lanczos. Las etiquetas quedan a ~75% del tamaño de
+diseño: legibles, pero un toque blandas. Si en la pantalla real no se leen, la
+salida es usar el zoom nativo 1:1 (cobertura 60/30 km) cambiando `widthKm` en
+`MODES`, sin tocar una línea de C++.
+
+⚠️ En modo 40 km **Ezeiza queda fuera del recorte** (está a ~28 km al sur y el
+alto visible son ±21,8 km). Es esperable, no un bug.
+
+### Tres trampas que ya nos costaron
+
+1. **Los tiles de CARTO y Stadia devuelven HTTP 200 con una imagen que dice
+   "API KEY REQUIRED"** en vez de un error. Chequear el status code no alcanza:
+   hay que *mirar* el resultado. Por eso el proyecto usa el basemap oscuro de
+   Esri, que no pide key.
+2. **Esri usa `{z}/{fila}/{columna}` en la URL, o sea Y antes que X**, al revés
+   de la convención de OSM. Y sirve el fondo y las etiquetas como dos capas
+   separadas que hay que componer.
+3. **Los `.bin` se guardan en big-endian a propósito**, que es como los quiere el
+   ILI9341. Así el ESP32 hace `setSwapBytes(false)` y empuja el buffer sin tocar
+   un byte. Si algún día los colores salen psicodélicos, el sospechoso es
+   `toRgb565BE()` en `build-map.mjs`.
+
+### Proyección
+
+El mapa está en **Web Mercator**, no en equirectangular: la latitud no se puede
+interpolar linealmente contra el alto de la imagen o los aviones quedan corridos
+en vertical. `src/GeoMap.h` hace la proyección correcta usando las constantes de
+`src/MapAssets.h`, que **genera el mismo script que arma los `.bin`** — así la
+imagen y la proyección del firmware no se pueden desincronizar.
+
+`verify-map.mjs` valida esto sin flashear: proyecta Ezeiza, Aeroparque, El
+Palomar y el Obelisco con la misma fórmula y los marca sobre el preview.
+
+### Atribución
+
+Los tiles son **© Esri — World Dark Gray Canvas** (Esri, HERE, Garmin,
+© OpenStreetMap contributors y la comunidad GIS).
+
+### Un solo fetch para Radar y Mapa
+
+Las dos pantallas miran la misma zona, así que comparten una única llamada a
+OpenSky (`HOME_FETCH_RADIUS_KM = 45`, que cubre a la vez el radio de 40 km del
+radar y el recorte de 87,3 km de alto del mapa). Cambiar de Radar a Mapa, o
+alternar el zoom, **no dispara ninguna request**: son recortes de datos que ya
+están en RAM.
 
 ## APIs usadas
 

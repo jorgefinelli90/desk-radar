@@ -72,15 +72,11 @@ void enrichWithGeo(std::vector<AircraftState>& list, double refLat, double refLo
 void fetchForCurrentMode() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  if (currentMode == Mode::Radar) {
-    auto box = GeoUtils::boundingBox(HOME_LAT, HOME_LON, RADAR_RANGE_KM);
+  if (currentMode == Mode::Radar || currentMode == Mode::Map) {
+    // Mismo recuadro para las dos: miran la misma zona (ver HOME_FETCH_RADIUS_KM)
+    auto box = GeoUtils::boundingBox(HOME_LAT, HOME_LON, HOME_FETCH_RADIUS_KM);
     if (opensky.fetchStates(box, aircraft)) {
       enrichWithGeo(aircraft, HOME_LAT, HOME_LON);
-    }
-  } else if (currentMode == Mode::Map) {
-    GeoUtils::BBox box { MAP_BA_LAT_MIN, MAP_BA_LAT_MAX, MAP_BA_LON_MIN, MAP_BA_LON_MAX };
-    if (opensky.fetchStates(box, aircraft)) {
-      enrichWithGeo(aircraft, HOME_LAT, HOME_LON); // distancia a casa: la usa el color y el detalle
     }
   } else if (currentMode == Mode::Airports) {
     const AirportDef& ap = AIRPORTS[currentAirportIdx];
@@ -123,15 +119,28 @@ void goHome() {
   renderCurrentMode();
 }
 
+// true si las dos pantallas se alimentan del mismo fetch
+static bool sharesAircraftData(Mode a, Mode b) {
+  auto usesHomeBox = [](Mode m) { return m == Mode::Radar || m == Mode::Map; };
+  return usesHomeBox(a) && usesHomeBox(b);
+}
+
 void enterMode(Mode m) {
+  Mode previous = currentMode;
   currentMode = m;
-  lastFetch = 0; // fuerza un fetch inmediato al entrar
+
+  // Radar y Mapa comparten el recuadro: pasar de uno al otro reusa los aviones
+  // que ya tenemos en vez de gastar otra llamada a OpenSky y hacerte esperar.
+  if (!sharesAircraftData(previous, m)) {
+    lastFetch = 0; // fuerza un fetch inmediato al entrar
+  }
 
   // Noticias y clima tardan un par de segundos en responder: avisamos en vez
   // de dejar la pantalla en negro mientras va la request.
   if (m == Mode::News)         display.showMessage("Buscando titulares...");
   else if (m == Mode::Weather) display.showMessage("Consultando el clima...");
   else if (m == Mode::Radar)   radarScreen.onEnter(); // limpia y reinicia el barrido
+  else if (m == Mode::Map)     mapScreen.onEnter();   // fuerza el redibujo del mapa
 
   fetchForCurrentMode();
   renderCurrentMode();
@@ -141,6 +150,7 @@ void setup() {
   Serial.begin(115200);
   display.begin();
   touch.begin(); // corre el wizard de calibración la primera vez
+  mapScreen.begin(); // monta LittleFS con los mapas pre-renderizados
   connectWiFi();
   renderCurrentMode(); // Home
 }
@@ -191,8 +201,10 @@ void loop() {
   if (currentMode == Mode::Detail) {
     if (tapped) {
       currentMode = detailReturnMode;
-      // Volvemos al radar desde otra pantalla: hay que repintar el marco fijo
-      if (currentMode == Mode::Radar) radarScreen.onEnter();
+      // Volvemos desde el Detail: la pantalla de origen quedó tapada por la
+      // ficha, así que hay que repintarla entera.
+      if (currentMode == Mode::Radar)    radarScreen.onEnter();
+      else if (currentMode == Mode::Map) mapScreen.onEnter();
       renderCurrentMode();
     }
     delay(30);
@@ -246,6 +258,15 @@ void loop() {
     }
   }
 
+  // En Mapa: el botón inferior alterna entre 80 km y 40 km. No pide datos
+  // nuevos: los dos zooms son recortes de la misma zona ya descargada.
+  if (tapped && currentMode == Mode::Map && mapScreen.zoomButtonRect().contains(tx, ty)) {
+    mapScreen.toggleZoom();
+    renderCurrentMode();
+    delay(30);
+    return;
+  }
+
   // En Aeropuertos: tocar el botón inferior rota al siguiente aeropuerto
   if (tapped && currentMode == Mode::Airports && airportScreen.nextButtonRect().contains(tx, ty)) {
     currentAirportIdx = (currentAirportIdx + 1) % AIRPORT_COUNT;
@@ -256,13 +277,11 @@ void loop() {
     return;
   }
 
-  // Refresco adaptativo: más rápido si hay tráfico cerca de casa (solo en modo Radar).
-  // El mapa provincial se mueve poco a esa escala, así que refresca más lento.
-  fastMode = (currentMode == Mode::Radar) && RadarScreen::hasNearbyTraffic(aircraft);
-  uint32_t interval;
-  if (currentMode == Mode::Map)   interval = REFRESH_MAP_MS;
-  else if (fastMode)              interval = REFRESH_FAST_MS;
-  else                            interval = REFRESH_NORMAL_MS;
+  // Refresco adaptativo: más rápido si hay tráfico cerca de casa. Vale para
+  // Radar y Mapa por igual, que ahora miran la misma zona.
+  fastMode = (currentMode == Mode::Radar || currentMode == Mode::Map) &&
+             RadarScreen::hasNearbyTraffic(aircraft);
+  uint32_t interval = fastMode ? REFRESH_FAST_MS : REFRESH_NORMAL_MS;
 
   if (millis() - lastFetch >= interval) {
     if (WiFi.status() != WL_CONNECTED) {

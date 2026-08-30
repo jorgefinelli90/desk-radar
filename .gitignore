@@ -4,3 +4,12 @@ build/
 *.o
 include/secrets.h
 credentials*.json
+
+# Herramienta de generacion del mapa
+tools/node_modules/
+# Previews y verificaciones: se regeneran con build-map.mjs / verify-map.mjs
+tools/preview*.png
+tools/check*.png
+
+# data/*.bin y src/MapAssets.h SI van al repo a proposito: sin ellos el
+# proyecto no compila ni tiene mapa hasta que corras el generador.

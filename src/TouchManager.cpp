@@ -1,14 +1,21 @@
 #include "TouchManager.h"
+#include "config.h"
 #include <Preferences.h>
 
 static const char* PREFS_NAMESPACE = "touchcal";
 static const char* PREFS_KEY = "data";
+// La calibración solo vale para la rotación con la que se tomó (los datos que
+// devuelve calibrateTouch mapean raw->pantalla ya orientada). Guardamos al lado
+// con qué rotación se calibró: si cambia SCREEN_ROTATION, el wizard se vuelve a
+// correr solo en vez de dejar el touch espejado.
+static const char* PREFS_KEY_ROT = "rot";
 
 bool TouchManager::loadCalibration() {
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, true); // read-only
   bool ok = false;
-  if (prefs.isKey(PREFS_KEY) && prefs.getBytesLength(PREFS_KEY) == sizeof(_calData)) {
+  if (prefs.isKey(PREFS_KEY) && prefs.getBytesLength(PREFS_KEY) == sizeof(_calData) &&
+      prefs.getUChar(PREFS_KEY_ROT, 0xFF) == SCREEN_ROTATION) {
     prefs.getBytes(PREFS_KEY, _calData, sizeof(_calData));
     ok = true;
   }
@@ -20,6 +27,7 @@ void TouchManager::saveCalibration() {
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, false);
   prefs.putBytes(PREFS_KEY, _calData, sizeof(_calData));
+  prefs.putUChar(PREFS_KEY_ROT, SCREEN_ROTATION);
   prefs.end();
 }
 

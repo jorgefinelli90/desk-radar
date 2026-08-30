@@ -1,164 +1,274 @@
 #include "MapScreen.h"
+#include "GeoMap.h"
 #include "config.h"
 #include <math.h>
+#include <algorithm>
 
-// Contorno simplificado de la provincia de Buenos Aires, en sentido horario
-// desde el noroeste. No es cartografía fina: son los ~23 puntos que hacen
-// reconocible la silueta (delta del Paraná, Río de la Plata, Bahía
-// Samborombón, Cabo San Antonio, costa atlántica, ría de Bahía Blanca,
-// Patagones y el límite recto con La Pampa).
-struct GeoPt { double lat; double lon; };
-
-static const GeoPt BA_OUTLINE[] = {
-  {-34.00, -63.40}, {-33.90, -62.10}, {-33.55, -60.90}, {-33.25, -60.20},
-  {-33.70, -59.40}, {-34.10, -58.55}, {-34.60, -58.37}, {-34.95, -57.85},
-  {-35.40, -57.15}, {-36.05, -57.35}, {-36.40, -56.75}, {-37.10, -56.70},
-  {-38.00, -57.53}, {-38.55, -58.75}, {-38.90, -60.30}, {-39.05, -61.30},
-  {-38.95, -62.10}, {-39.60, -62.30}, {-40.30, -62.30}, {-40.90, -62.95},
-  {-39.30, -63.40}, {-37.50, -63.40}, {-35.60, -63.40},
+// Rampa de altitud, misma idea que la escala de colores de FlightRadar24:
+// naranja abajo, pasando por amarillo y verde, hasta cian/azul arriba.
+// OpenSky devuelve metros; la aviación piensa en pies, así que los umbrales
+// están en pies y la conversión se hace acá.
+struct AltStop { float ft; uint16_t color; };
+static const AltStop ALT_STOPS[] = {
+  {     0.0f, 0xFB00 }, // naranja fuerte
+  {  1000.0f, 0xFC80 }, // naranja
+  {  4000.0f, 0xFFE0 }, // amarillo
+  { 10000.0f, 0x87E0 }, // verde claro
+  { 20000.0f, 0x07EF }, // verde/cian
+  { 40000.0f, 0x04FF }, // cian/azul
 };
-static const int BA_OUTLINE_N = sizeof(BA_OUTLINE) / sizeof(BA_OUTLINE[0]);
+static const int ALT_STOPS_N = sizeof(ALT_STOPS) / sizeof(ALT_STOPS[0]);
 
-struct CityRef { const char* name; double lat; double lon; };
-static const CityRef CITIES[] = {
-  { "BsAs",      -34.61, -58.38 },
-  { "Junin",     -34.59, -60.94 },
-  { "S.Nicolas", -33.34, -60.22 },
-  { "Tandil",    -37.32, -59.13 },
-  { "MdP",       -38.00, -57.55 },
-  { "B.Blanca",  -38.72, -62.27 },
-};
-static const int CITIES_N = sizeof(CITIES) / sizeof(CITIES[0]);
+// Interpola en RGB565 entre los dos stops que rodean la altitud dada.
+uint16_t MapScreen::altitudeColor(double meters) {
+  float ft = (float)(meters * 3.28084);
 
-static const size_t MAX_PLANES = 80; // tope de seguridad para el render/hit-test
+  if (ft <= ALT_STOPS[0].ft) return ALT_STOPS[0].color;
+  if (ft >= ALT_STOPS[ALT_STOPS_N - 1].ft) return ALT_STOPS[ALT_STOPS_N - 1].color;
 
-void MapScreen::computeMapArea(TFT_eSPI& tft) {
-  int availX = 4;
-  int availY = DisplayManager::STATUS_BAR_HEIGHT + 4;
-  int availW = tft.width() - 8;
-  int availH = (tft.height() - 26) - availY - 2; // deja la franja inferior de leyenda
+  for (int i = 1; i < ALT_STOPS_N; i++) {
+    if (ft > ALT_STOPS[i].ft) continue;
 
-  // Aspecto real: 1 grado de longitud "mide" menos km que uno de latitud.
-  double midLat = (MAP_BA_LAT_MIN + MAP_BA_LAT_MAX) / 2.0;
-  double lonKm = (MAP_BA_LON_MAX - MAP_BA_LON_MIN) * 111.32 * cos(midLat * DEG_TO_RAD);
-  double latKm = (MAP_BA_LAT_MAX - MAP_BA_LAT_MIN) * 111.32;
-  double aspect = lonKm / latKm; // ancho / alto
+    const AltStop& a = ALT_STOPS[i - 1];
+    const AltStop& b = ALT_STOPS[i];
+    float t = (ft - a.ft) / (b.ft - a.ft);
 
-  int w = availW;
-  int h = (int)(w / aspect);
-  if (h > availH) { h = availH; w = (int)(h * aspect); }
-
-  _mapArea = { availX + (availW - w) / 2, availY + (availH - h) / 2, w, h };
-}
-
-int MapScreen::mapX(double lon) const {
-  return _mapArea.x + (int)((lon - MAP_BA_LON_MIN) / (MAP_BA_LON_MAX - MAP_BA_LON_MIN) * _mapArea.w);
-}
-
-int MapScreen::mapY(double lat) const {
-  // Latitud mayor (norte) arriba.
-  return _mapArea.y + (int)((MAP_BA_LAT_MAX - lat) / (MAP_BA_LAT_MAX - MAP_BA_LAT_MIN) * _mapArea.h);
-}
-
-bool MapScreen::inBounds(double lat, double lon) const {
-  return lat >= MAP_BA_LAT_MIN && lat <= MAP_BA_LAT_MAX &&
-         lon >= MAP_BA_LON_MIN && lon <= MAP_BA_LON_MAX;
-}
-
-void MapScreen::drawOutline(TFT_eSPI& tft) {
-  for (int i = 0; i < BA_OUTLINE_N; i++) {
-    const GeoPt& a = BA_OUTLINE[i];
-    const GeoPt& b = BA_OUTLINE[(i + 1) % BA_OUTLINE_N];
-    tft.drawLine(mapX(a.lon), mapY(a.lat), mapX(b.lon), mapY(b.lat), TFT_DARKCYAN);
+    // Separar los canales, mezclar, y volver a armar
+    int r1 = (a.color >> 11) & 0x1F, g1 = (a.color >> 5) & 0x3F, b1 = a.color & 0x1F;
+    int r2 = (b.color >> 11) & 0x1F, g2 = (b.color >> 5) & 0x3F, b2 = b.color & 0x1F;
+    int r = r1 + (int)lroundf((r2 - r1) * t);
+    int g = g1 + (int)lroundf((g2 - g1) * t);
+    int bl = b1 + (int)lroundf((b2 - b1) * t);
+    return (uint16_t)((r << 11) | (g << 5) | bl);
   }
+
+  return ALT_STOPS[ALT_STOPS_N - 1].color;
 }
 
-void MapScreen::drawCities(TFT_eSPI& tft) {
-  tft.setTextColor(TFT_SILVER, TFT_BLACK);
-  for (int i = 0; i < CITIES_N; i++) {
-    int px = mapX(CITIES[i].lon);
-    int py = mapY(CITIES[i].lat);
-    tft.fillCircle(px, py, 1, TFT_SILVER);
+void MapScreen::onEnter() {
+  _needsFullRedraw = true;
+  _dirty.clear();
+}
 
-    // Ciudades del tercio este: etiqueta a la izquierda para no salirse del mapa.
-    if (px > _mapArea.x + _mapArea.w * 3 / 5) {
-      tft.setTextDatum(MR_DATUM);
-      tft.drawString(CITIES[i].name, px - 3, py, 1);
+void MapScreen::toggleZoom() {
+  _assetIdx = (_assetIdx + 1) % MAP_ASSET_COUNT;
+  _needsFullRedraw = true;  // cambió la imagen de fondo entera
+  _dirty.clear();
+}
+
+// Silueta de avión de ~12 px, rotada según el rumbo real.
+// Local: la nariz mira a -Y (arriba = Norte). trackDeg 0 = Norte, horario.
+void MapScreen::drawPlane(TFT_eSPI& tft, int x, int y, double trackDeg, uint16_t color) {
+  float a = (float)(trackDeg * M_PI / 180.0);
+  float ca = cosf(a), sa = sinf(a);
+
+  // Rotación horaria en pantalla (Y crece hacia abajo)
+  auto rx = [&](float lx, float ly) { return x + (int)lroundf(lx * ca - ly * sa); };
+  auto ry = [&](float lx, float ly) { return y + (int)lroundf(lx * sa + ly * ca); };
+
+  // Fuselaje
+  tft.fillTriangle(rx(0, -6), ry(0, -6),
+                   rx(-1.5f, 5), ry(-1.5f, 5),
+                   rx(1.5f, 5), ry(1.5f, 5), color);
+
+  // Alas en flecha
+  tft.fillTriangle(rx(0, -1), ry(0, -1), rx(-6, 3), ry(-6, 3), rx(0, 2.5f), ry(0, 2.5f), color);
+  tft.fillTriangle(rx(0, -1), ry(0, -1), rx(6, 3), ry(6, 3), rx(0, 2.5f), ry(0, 2.5f), color);
+
+  // Estabilizador de cola
+  tft.fillTriangle(rx(0, 3), ry(0, 3), rx(-2.5f, 6), ry(-2.5f, 6), rx(0, 5.5f), ry(0, 5.5f), color);
+  tft.fillTriangle(rx(0, 3), ry(0, 3), rx(2.5f, 6), ry(2.5f, 6), rx(0, 5.5f), ry(0, 5.5f), color);
+}
+
+void MapScreen::drawHome(TFT_eSPI& tft) {
+  const MapAsset& asset = MAP_ASSETS[_assetIdx];
+  float hx = GeoMap::screenX(HOME_LON, asset);
+  float hy = GeoMap::screenY(HOME_LAT, asset);
+  if (!GeoMap::inView(hx, hy)) return;
+
+  int px = (int)lroundf(hx);
+  int py = MAP_TOP + (int)lroundf(hy);
+
+  // Anillo oscuro + punto amarillo: se distingue sobre cualquier fondo del mapa
+  tft.drawCircle(px, py, 5, TFT_BLACK);
+  tft.drawCircle(px, py, 4, TFT_WHITE);
+  tft.fillCircle(px, py, 3, TFT_YELLOW);
+}
+
+void MapScreen::drawLegend(TFT_eSPI& tft) {
+  tft.fillRect(0, LEGEND_Y, tft.width(), LEGEND_H, TFT_BLACK);
+
+  // Barra de gradiente: una columna de 1 px por cada paso de altitud
+  const int barX = 4;
+  const int barW = tft.width() - 8;
+  const int barY = LEGEND_Y + 1;
+  const int barH = 6;
+
+  const float maxFt = ALT_STOPS[ALT_STOPS_N - 1].ft;
+  for (int i = 0; i < barW; i++) {
+    float ft = (float)i / barW * maxFt;
+    tft.drawFastVLine(barX + i, barY, barH, altitudeColor(ft / 3.28084f));
+  }
+
+  // Marcas de referencia, en miles de pies
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  const int marks[] = { 0, 10000, 20000, 40000 };
+  const char* labels[] = { "0", "10k", "20k", "40k ft" };
+  for (int i = 0; i < 4; i++) {
+    int mx = barX + (int)((marks[i] / maxFt) * barW);
+    if (i == 3) {
+      tft.setTextDatum(TR_DATUM);
+      tft.drawString(labels[i], barX + barW, barY + barH + 1, 1);
     } else {
-      tft.setTextDatum(ML_DATUM);
-      tft.drawString(CITIES[i].name, px + 3, py, 1);
+      tft.setTextDatum(TL_DATUM);
+      tft.drawString(labels[i], mx, barY + barH + 1, 1);
     }
   }
 }
 
-void MapScreen::drawPlane(TFT_eSPI& tft, int x, int y, double trackDeg, uint16_t color) {
-  double h = (trackDeg - 90.0) * DEG_TO_RAD; // 0 grados = Norte = arriba
-  const double s = 5.0;
-  int nx = x + (int)lround(cos(h) * s);
-  int ny = y + (int)lround(sin(h) * s);
-  int lx = x + (int)lround(cos(h + 2.5) * s);
-  int ly = y + (int)lround(sin(h + 2.5) * s);
-  int rx = x + (int)lround(cos(h - 2.5) * s);
-  int ry = y + (int)lround(sin(h - 2.5) * s);
-  tft.fillTriangle(nx, ny, lx, ly, rx, ry, color);
+void MapScreen::drawZoomButton(TFT_eSPI& tft) {
+  tft.fillRect(_zoomBtn.x, _zoomBtn.y, _zoomBtn.w, _zoomBtn.h, TFT_NAVY);
+  tft.drawFastHLine(_zoomBtn.x, _zoomBtn.y, _zoomBtn.w, TFT_BLUE);
+
+  char label[40];
+  int other = MAP_ASSETS[(_assetIdx + 1) % MAP_ASSET_COUNT].widthKm;
+  snprintf(label, sizeof(label), "%d km   >   ver %d km",
+           MAP_ASSETS[_assetIdx].widthKm, other);
+
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_NAVY);
+  tft.drawString(label, tft.width() / 2, _zoomBtn.y + _zoomBtn.h / 2, 2);
+}
+
+// Aviso compacto arriba del área del mapa. Va en dos renglones y no en el
+// centro a propósito: los aviones se siguen dibujando encima, y un cartel
+// grande en el medio los tapaba y quedaba ilegible (se vio en la placa).
+void MapScreen::drawNoMapNotice(TFT_eSPI& tft) {
+  const int h = 22;
+  tft.fillRect(0, MAP_TOP, tft.width(), h, 0x2000); // rojo muy oscuro
+  tft.drawFastHLine(0, MAP_TOP + h, tft.width(), TFT_MAROON);
+
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_ORANGE, 0x2000);
+  tft.drawString("Sin mapa de fondo", 6, MAP_TOP + 2, 1);
+  tft.setTextColor(TFT_SILVER, 0x2000);
+  tft.drawString("corre: pio run -t uploadfs", 6, MAP_TOP + 12, 1);
 }
 
 void MapScreen::render(std::vector<AircraftState>& aircraft) {
   TFT_eSPI& tft = _display.tft();
-  tft.fillScreen(TFT_BLACK);
+  const MapAsset& asset = MAP_ASSETS[_assetIdx];
 
-  computeMapArea(tft);
+  _zoomBtn = { 0, (int)tft.height() - ZOOM_BTN_H, (int)tft.width(), ZOOM_BTN_H };
 
-  // Marco del mapa + contorno de la provincia + ciudades de referencia
-  tft.drawRect(_mapArea.x, _mapArea.y, _mapArea.w, _mapArea.h, TFT_DARKGREEN);
-  drawOutline(tft);
-  drawCities(tft);
+  // --- Fondo ---------------------------------------------------------------
+  if (!_tiles.ready()) {
+    // Sin mapa seguimos mostrando los aviones, pero sobre negro. Acá NO se
+    // puede usar pushRect para borrar los del frame anterior (no hay de dónde
+    // leer), así que se limpia toda el área en cada render: si no, los aviones
+    // van dejando rastro y _dirty crece sin fin.
+    if (_needsFullRedraw) {
+      tft.fillScreen(TFT_BLACK);
+      drawLegend(tft);
+      drawZoomButton(tft);
+      _needsFullRedraw = false;
+    }
+    tft.fillRect(0, MAP_TOP, tft.width(), MAP_VIEW_H, TFT_BLACK);
+    drawNoMapNotice(tft);
+    _dirty.clear();
+  } else if (_needsFullRedraw) {
+    tft.fillScreen(TFT_BLACK);
+    _tiles.pushFull(_assetIdx, MAP_TOP);
+    drawLegend(tft);
+    drawZoomButton(tft);
+    _needsFullRedraw = false;
+    _dirty.clear();
+  } else {
+    // Solo restauramos las zonas que ensuciamos en el frame anterior: releer los
+    // 125 KB completos en cada refresco daría un repintado visible cada 5 s en
+    // modo rápido.
+    for (const auto& r : _dirty) {
+      _tiles.pushRect(_assetIdx, r, MAP_TOP);
+    }
+    _dirty.clear();
+  }
 
-  // Tu casa
-  int hx = mapX(HOME_LON);
-  int hy = mapY(HOME_LAT);
-  tft.fillTriangle(hx - 3, hy + 3, hx + 3, hy + 3, hx, hy - 4, TFT_YELLOW);
+  // --- Casa ----------------------------------------------------------------
+  drawHome(tft);
+  {
+    const MapAsset& a = MAP_ASSETS[_assetIdx];
+    float hx = GeoMap::screenX(HOME_LON, a);
+    float hy = GeoMap::screenY(HOME_LAT, a);
+    if (GeoMap::inView(hx, hy)) {
+      _dirty.push_back({ (int)hx - 6, (int)hy - 6, 12, 12 });
+    }
+  }
 
-  // Aviones sobre la provincia
+  // --- Aviones -------------------------------------------------------------
+  std::sort(aircraft.begin(), aircraft.end(),
+            [](const AircraftState& a, const AircraftState& b) {
+              return a.distanceKm < b.distanceKm;
+            });
+
   _blips.clear();
+  const AircraftState* closest = nullptr;
+  int closestX = 0, closestY = 0;
   int shown = 0;
+
   for (auto& a : aircraft) {
     if (a.onGround) continue;
-    if (!inBounds(a.lat, a.lon)) continue;
     if (_blips.size() >= MAX_PLANES) break;
 
-    int px = mapX(a.lon);
-    int py = mapY(a.lat);
+    float fx = GeoMap::screenX(a.lon, asset);
+    float fy = GeoMap::screenY(a.lat, asset);
+    if (!GeoMap::inView(fx, fy)) continue;   // fuera del recorte del mapa
 
-    uint16_t color = TFT_GREEN;
-    if (a.distanceKm <= RADAR_NEAR_KM)          color = TFT_RED;    // pasando cerca de casa
-    else if (a.baroAltitudeM <= AIRPORT_MAX_ALT_M) color = TFT_YELLOW; // vuelo bajo (despega/aterriza)
+    int px = (int)lroundf(fx);
+    int py = MAP_TOP + (int)lroundf(fy);
 
-    drawPlane(tft, px, py, a.trackDeg, color);
+    drawPlane(tft, px, py, a.trackDeg, altitudeColor(a.baroAltitudeM));
+
+    // Zona a restaurar: la silueta rotada entra en un cuadrado de 16 px
+    _dirty.push_back({ px - 8, (int)lroundf(fy) - 8, 16, 16 });
 
     // Zona tocable más grande que el glifo: con touch resistivo y dedo,
-    // un blanco de 6px es imposible de acertar.
+    // un blanco de 12 px es imposible de acertar.
     const int TOUCH_PAD = 12;
     AircraftBlip blip;
     blip.hitBox = { px - TOUCH_PAD, py - TOUCH_PAD, TOUCH_PAD * 2, TOUCH_PAD * 2 };
     blip.aircraft = a;
     _blips.push_back(blip);
 
+    if (!closest) { closest = &a; closestX = px; closestY = py; }
     shown++;
+  }
+
+  // --- Callsign del más cercano --------------------------------------------
+  // Solo uno: a 240 px de ancho, diez etiquetas de 8 caracteres se pisan entre
+  // sí y tapan el mapa. El resto se consulta tocando el avión.
+  if (closest) {
+    String cs = closest->callsign.length() ? closest->callsign : closest->icao24;
+    int tw = tft.textWidth(cs, 1) + 4;
+    int tx = closestX + 10;
+    int ty = closestY - 4;
+    if (tx + tw > MAP_VIEW_W) tx = closestX - 10 - tw; // se salía por la derecha
+    if (tx < 0) tx = 0;
+    if (ty < MAP_TOP) ty = MAP_TOP;
+    if (ty + 10 > MAP_TOP + MAP_VIEW_H) ty = MAP_TOP + MAP_VIEW_H - 10;
+
+    // Fondo opaco: sobre el mapa, texto sin fondo se vuelve ilegible
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.fillRect(tx, ty, tw, 10, TFT_BLACK);
+    tft.drawString(cs, tx + 2, ty + 1, 1);
+
+    _dirty.push_back({ tx, ty - MAP_TOP, tw, 10 });
   }
 
   char right[20];
   snprintf(right, sizeof(right), "%d aviones", shown);
-  _display.showStatusBar("< HOME  MAPA BA", right, false);
-
-  // Franja inferior con la leyenda de colores
-  int panelY = tft.height() - 26;
-  tft.drawFastHLine(0, panelY, tft.width(), TFT_DARKGREEN);
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("Amarillo: vuelo bajo (<3000m)", 6, panelY + 4, 1);
-  tft.setTextColor(TFT_RED, TFT_BLACK);
-  tft.drawString("Rojo: a menos de 10 km de casa", 6, panelY + 15, 1);
+  _display.showStatusBar("< HOME  MAPA", right, false);
 }
 
 const AircraftState* MapScreen::hitTest(uint16_t x, uint16_t y) const {

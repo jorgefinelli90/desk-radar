@@ -1,0 +1,13 @@
+{
+  "name": "desk-radar-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generador del mapa raster pre-renderizado para desk-radar",
+  "scripts": {
+    "build-map": "node build-map.mjs"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}
