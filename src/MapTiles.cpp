@@ -139,3 +139,32 @@ bool MapTiles::pushRect(int assetIdx, const UiRect& r, int screenTop) {
   f.close();
   return ok;
 }
+
+bool MapTiles::loadRaw(const char* path, uint8_t* dst, size_t bytes) {
+  if (!_mounted || !dst) return false;
+
+  fs::File f = LittleFS.open(path, "r");
+  if (!f) {
+    Serial.printf("[Mapa] Falta %s\n", path);
+    return false;
+  }
+
+  // Chequeo de tamano exacto: un archivo corto dibujaria basura en la mitad de
+  // abajo del disco sin dar ningun error visible.
+  if (f.size() != bytes) {
+    Serial.printf("[Mapa] %s mide %u bytes, se esperaban %u\n",
+                  path, (unsigned)f.size(), (unsigned)bytes);
+    f.close();
+    return false;
+  }
+
+  size_t got = f.read(dst, bytes);
+  f.close();
+
+  if (got != bytes) {
+    Serial.printf("[Mapa] Lectura corta de %s (%u de %u)\n",
+                  path, (unsigned)got, (unsigned)bytes);
+    return false;
+  }
+  return true;
+}

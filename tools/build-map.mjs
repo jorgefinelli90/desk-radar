@@ -46,6 +46,29 @@ const MODES = [
   { name: '40', widthKm: 40, zoom: 10 },
 ];
 
+// --- Mapa de fondo del radar -----------------------------------------------
+// El disco del radar es un sprite de 4 bpp (16 colores) porque uno de 16 bpp
+// costaria 80 KB y no convive con el handshake TLS. Asi que el mapa de fondo va
+// cuantizado a 5 grises y se guarda YA EMPAQUETADO en 4 bpp con el mismo layout
+// que usa TFT_eSprite: (x + y*w)>>1, nibble alto para x par. Asi el firmware lo
+// mete al sprite con un memcpy en vez de convertir pixel por pixel.
+//
+// Los 11 indices que sobran son para el radar (anillos, estela, blips, casa).
+//
+// Estos tres valores TIENEN que coincidir con RadarScreen.h y config.h; el
+// header generado incluye un static_assert que lo verifica al compilar.
+const RADAR_DISC_SIZE = 200;  // lado del sprite del disco
+const RADAR_RING_MAX  = 88;   // radio en px del anillo exterior
+const RADAR_RANGE_KM  = 20;   // alcance real del anillo exterior
+const RADAR_ZOOM      = 10;   // zoom de los tiles de origen
+const RADAR_MASK_R    = 90;   // fuera de este radio el mapa queda negro
+const RADAR_GREYS     = 5;    // niveles de gris del mapa
+// Rango de luminancia al que se estiran esos niveles para mostrar. El mapa tiene
+// que leerse en una TFT chica sin robarle protagonismo al radar: subir el max
+// hace el mapa mas contrastado, bajarlo lo deja mas discreto.
+const RADAR_STRETCH_MIN = 20;
+const RADAR_STRETCH_MAX = 105;
+
 // Basemap oscuro de Esri. Se usa porque no pide API key: CARTO y Stadia hoy
 // devuelven HTTP 200 con un tile marcado "API KEY REQUIRED" en vez de un error,
 // asi que chequear el status code no alcanza para darse cuenta.
@@ -199,8 +222,171 @@ async function buildMode(mode) {
   return { name, widthKm, zoom, srcW, srcH, scale, originPx, originPy, mPerPxTarget };
 }
 
+// --- Mapa del radar: 4 bpp indexado, en escala de grises y recortado en circulo
+async function buildRadarMap() {
+  const size = RADAR_DISC_SIZE;
+  const mPerPxNative = resolution(RADAR_ZOOM, HOME_LAT);
+  const mPerPxTarget = (RADAR_RANGE_KM * 1000) / RADAR_RING_MAX;
+
+  const srcSize = Math.round((size * mPerPxTarget) / mPerPxNative);
+  const scale = size / srcSize;
+
+  const centerPx = lonToWorldPx(HOME_LON, RADAR_ZOOM);
+  const centerPy = latToWorldPy(HOME_LAT, RADAR_ZOOM);
+  const originPx = centerPx - srcSize / 2;
+  const originPy = centerPy - srcSize / 2;
+
+  const tx0 = Math.floor(originPx / TILE_SIZE);
+  const tx1 = Math.floor((originPx + srcSize) / TILE_SIZE);
+  const ty0 = Math.floor(originPy / TILE_SIZE);
+  const ty1 = Math.floor((originPy + srcSize) / TILE_SIZE);
+  const nTiles = (tx1 - tx0 + 1) * (ty1 - ty0 + 1);
+
+  console.log(`\n--- mapa del radar (zoom OSM ${RADAR_ZOOM}) ---`);
+  console.log(`  alcance ${RADAR_RANGE_KM} km en ${RADAR_RING_MAX} px  ->  ${mPerPxTarget.toFixed(1)} m/px`);
+  console.log(`  fuente ${srcSize}x${srcSize} px  ->  ${size}x${size} (factor ${scale.toFixed(3)})`);
+  console.log(`  bajando ${nTiles} tiles (solo fondo, sin etiquetas)...`);
+
+  // Solo la capa Base: el radar no lleva nombres de ciudades, unicamente el
+  // marcador de El Palomar que dibuja el firmware.
+  const mosaicSide = (tx1 - tx0 + 1) * TILE_SIZE;
+  const bases = [];
+  for (let tx = tx0; tx <= tx1; tx++) {
+    for (let ty = ty0; ty <= ty1; ty++) {
+      bases.push({
+        input: await fetchBaseTile(RADAR_ZOOM, tx, ty),
+        left: (tx - tx0) * TILE_SIZE,
+        top: (ty - ty0) * TILE_SIZE,
+      });
+    }
+  }
+
+  const mosaic = sharp({
+    create: {
+      width: mosaicSide,
+      height: (ty1 - ty0 + 1) * TILE_SIZE,
+      channels: 3,
+      background: { r: 0, g: 0, b: 0 },
+    },
+  }).composite(bases);
+
+  const cropLeft = Math.round(originPx - tx0 * TILE_SIZE);
+  const cropTop = Math.round(originPy - ty0 * TILE_SIZE);
+
+  const shrunk = sharp(await mosaic.png().toBuffer())
+    .extract({ left: cropLeft, top: cropTop, width: srcSize, height: srcSize })
+    .resize(size, size, { kernel: 'lanczos3' })
+    .greyscale();
+
+  await shrunk.clone().png().toFile(join(HERE, 'previewradar.png'));
+
+  const { data } = await shrunk.removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  // greyscale() deja 1 canal
+  const lum = data;
+
+  // --- Cuantizacion a RADAR_GREYS niveles ---
+  // Se usa k-means (Lloyd) sobre el histograma, NO cuantiles por poblacion.
+  //
+  // El basemap oscuro tiene tres picos enormes (agua ~35, tierra ~71 y ~78) y
+  // las rutas viven dispersas entre 82 y 98 con muy pocos pixeles. Repartir los
+  // niveles por poblacion mete 4 de los 5 dentro del rango 75-80 y se come las
+  // rutas, que son justamente lo que hace reconocible el mapa. k-means busca
+  // los clusters reales, asi que separa agua, tierra y rutas.
+  const c = size / 2;
+  const hist = new Array(256).fill(0);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - c + 0.5, dy = y - c + 0.5;
+      if (dx * dx + dy * dy <= RADAR_MASK_R * RADAR_MASK_R) hist[lum[y * size + x]]++;
+    }
+  }
+
+  let lo = hist.findIndex((n) => n > 0);
+  let hi = 255; while (hi > lo && hist[hi] === 0) hi--;
+
+  // Centros iniciales repartidos parejo sobre el rango de valores
+  let centers = [];
+  for (let i = 0; i < RADAR_GREYS; i++) {
+    centers.push(lo + ((hi - lo) * i) / (RADAR_GREYS - 1));
+  }
+
+  for (let iter = 0; iter < 30; iter++) {
+    const sum = new Array(RADAR_GREYS).fill(0);
+    const cnt = new Array(RADAR_GREYS).fill(0);
+    for (let v = lo; v <= hi; v++) {
+      if (!hist[v]) continue;
+      let best = 0, bestD = Infinity;
+      for (let k = 0; k < RADAR_GREYS; k++) {
+        const d = Math.abs(v - centers[k]);
+        if (d < bestD) { bestD = d; best = k; }
+      }
+      sum[best] += v * hist[v];
+      cnt[best] += hist[v];
+    }
+    let moved = 0;
+    for (let k = 0; k < RADAR_GREYS; k++) {
+      if (!cnt[k]) continue;
+      const nc = sum[k] / cnt[k];
+      moved += Math.abs(nc - centers[k]);
+      centers[k] = nc;
+    }
+    if (moved < 0.01) break;
+  }
+  centers.sort((a, b) => a - b);
+
+  const levels = centers.map((v) => Math.round(v));
+  console.log(`  grises (k-means sobre el histograma): ${levels.join(', ')}`);
+
+  // El rango real de la imagen es angosto y oscuro (aca ~35..90 de 255), asi que
+  // en una TFT chica los niveles quedan casi indistinguibles. Se estiran para
+  // mostrar, manteniendo el orden y sin pasarse de RADAR_STRETCH_MAX: el mapa
+  // tiene que leerse, pero sin competir con los blips ni con la estela.
+  const srcLo = levels[0], srcHi = levels[levels.length - 1];
+  const display = levels.map((v) =>
+    srcHi === srcLo
+      ? RADAR_STRETCH_MIN
+      : Math.round(
+          RADAR_STRETCH_MIN +
+            ((v - srcLo) / (srcHi - srcLo)) * (RADAR_STRETCH_MAX - RADAR_STRETCH_MIN)
+        )
+  );
+  console.log(`  grises estirados para la pantalla:   ${display.join(', ')}`);
+
+  // --- Empaquetado 4 bpp, igual layout que TFT_eSprite ---
+  // indice 0 = negro (fuera del circulo); 1..RADAR_GREYS = niveles del mapa
+  const stride = size / 2;
+  const bin = Buffer.alloc(stride * size);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - c + 0.5, dy = y - c + 0.5;
+      let idx = 0;
+      if (dx * dx + dy * dy <= RADAR_MASK_R * RADAR_MASK_R) {
+        const v = lum[y * size + x];
+        let best = 0, bestD = Infinity;
+        for (let l = 0; l < levels.length; l++) {
+          const d = Math.abs(v - levels[l]);
+          if (d < bestD) { bestD = d; best = l; }
+        }
+        idx = best + 1; // 0 queda reservado para el negro de afuera
+      }
+
+      const o = (x + y * size) >> 1;
+      if ((x & 1) === 0) bin[o] = (bin[o] & 0x0f) | (idx << 4);
+      else               bin[o] = (bin[o] & 0xf0) | idx;
+    }
+  }
+
+  const outPath = join(ROOT, 'data', 'radar.bin');
+  await writeFile(outPath, bin);
+  console.log(`  escrito data/radar.bin (${bin.length.toLocaleString()} bytes, 4 bpp)`);
+  console.log(`  preview tools/previewradar.png`);
+
+  return { zoom: RADAR_ZOOM, originPx, originPy, scale, levels: display, bytes: bin.length };
+}
+
 // --- Header generado para el firmware --------------------------------------
-function renderHeader(results) {
+function renderHeader(results, radar) {
   const entries = results
     .map(
       (r) => `  // Modo ${r.name} km: zoom OSM ${r.zoom}, fuente ${r.srcW}x${r.srcH} reducida x${r.scale.toFixed(4)}
@@ -244,6 +430,41 @@ static const MapAsset MAP_ASSETS[] = {
 ${entries}
 };
 static const int MAP_ASSET_COUNT = sizeof(MAP_ASSETS) / sizeof(MAP_ASSETS[0]);
+
+// ---------------------------------------------------------------------------
+//  Mapa de fondo del radar
+// ---------------------------------------------------------------------------
+// Va aparte de MAP_ASSETS porque tiene otro formato: 4 bpp indexado y ya
+// empaquetado como lo espera TFT_eSprite, para poder meterlo al sprite con un
+// memcpy. Ademas viene sin etiquetas de ciudades y recortado en circulo.
+
+static const int RADAR_DISC_SIZE = ${RADAR_DISC_SIZE};
+static const int RADAR_RING_MAX  = ${RADAR_RING_MAX};
+
+// Alcance real del anillo exterior. Tiene que coincidir con RADAR_RANGE_KM de
+// config.h: RadarScreen.cpp lo verifica con un static_assert.
+static const int RADAR_MAP_RANGE_KM = ${RADAR_RANGE_KM};
+
+// (200 * 200) / 2 = 20.000 bytes
+static const uint32_t RADAR_MAP_BYTES =
+    (uint32_t)RADAR_DISC_SIZE * RADAR_DISC_SIZE / 2;
+
+static const MapAsset RADAR_MAP =
+    { "/radar.bin", ${radar.zoom}, ${radar.originPx.toFixed(4)}, ${radar.originPy.toFixed(4)}, ${radar.scale.toFixed(8)}f, ${RADAR_RANGE_KM} };
+
+// Los ${RADAR_GREYS} grises del mapa, en RGB565. Salen de los cuantiles del
+// histograma real de la imagen, no de una escala fija: el basemap oscuro usa un
+// rango angosto y repartir niveles parejos entre negro y blanco desperdiciaria
+// casi todos. Ocupan los indices 1..${RADAR_GREYS} de la paleta del disco.
+static const int RADAR_MAP_GREY_COUNT = ${RADAR_GREYS};
+static const uint16_t RADAR_MAP_GREYS[RADAR_MAP_GREY_COUNT] = {
+${radar.levels
+  .map((v) => {
+    const rgb565 = ((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3);
+    return `  0x${rgb565.toString(16).padStart(4, '0').toUpperCase()}, // luminancia ${v}`;
+  })
+  .join('\n')}
+};
 `;
 }
 
@@ -260,11 +481,13 @@ async function main() {
     results.push(await buildMode(mode));
   }
 
+  const radar = await buildRadarMap();
+
   const headerPath = join(ROOT, 'src', 'MapAssets.h');
-  await writeFile(headerPath, renderHeader(results));
+  await writeFile(headerPath, renderHeader(results, radar));
   console.log(`\nescrito src/MapAssets.h`);
 
-  const total = results.length * VIEW_W * VIEW_H * 2;
+  const total = results.length * VIEW_W * VIEW_H * 2 + radar.bytes;
   console.log(`\nTotal en flash: ${total.toLocaleString()} bytes`);
   console.log('\nAhora:  pio run -t uploadfs   (sube los mapas)');
   console.log('        pio run -t upload     (sube el firmware)');

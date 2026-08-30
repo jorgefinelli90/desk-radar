@@ -108,6 +108,53 @@ async function checkAsset(asset, viewW, viewH) {
   console.log(`    -> tools/check${asset.name}.png`);
 }
 
+// El mapa del radar se guarda en 4 bpp indexado con el mismo empaquetado que
+// usa TFT_eSprite ((x + y*w)>>1, nibble alto para x par), porque el firmware lo
+// mete al sprite con un memcpy. Si ese layout no coincide, el disco sale hecho
+// puré. Aca se decodifica el .bin DE VUELTA con la formula de la libreria: si
+// checkradar.png se parece al mapa, el empaquetado esta bien.
+async function checkRadarMap() {
+  const src = await readFile(join(ROOT, 'src', 'MapAssets.h'), 'utf8');
+  const size = Number(/RADAR_DISC_SIZE = (\d+)/.exec(src)[1]);
+  const greys = [...src.matchAll(/0x[0-9A-F]{4}, \/\/ luminancia (\d+)/g)].map((m) => Number(m[1]));
+
+  const bin = await readFile(join(ROOT, 'data', 'radar.bin'));
+  const expected = (size * size) / 2;
+  if (bin.length !== expected) {
+    throw new Error(`data/radar.bin mide ${bin.length} bytes, se esperaban ${expected}`);
+  }
+
+  const rgb = Buffer.alloc(size * size * 3);
+  const hist = {};
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const o = (x + y * size) >> 1;
+      const idx = (x & 1) === 0 ? (bin[o] >> 4) & 0x0f : bin[o] & 0x0f;
+      hist[idx] = (hist[idx] || 0) + 1;
+      const v = idx === 0 ? 0 : greys[idx - 1];
+      const p = (y * size + x) * 3;
+      rgb[p] = rgb[p + 1] = rgb[p + 2] = v;
+    }
+  }
+
+  await sharp(rgb, { raw: { width: size, height: size, channels: 3 } })
+    .png()
+    .toFile(join(HERE, 'checkradar.png'));
+
+  // El indice 0 es el negro de afuera del circulo. Su proporcion tiene que dar
+  // 1 - pi*r^2/lado^2: si no da, la mascara o el empaquetado estan mal.
+  const outside = (100 * (hist[0] || 0)) / (size * size);
+  console.log(`\n--- mapa del radar (${size}x${size}, 4 bpp) ---`);
+  console.log(`    grises: ${greys.join(', ')}`);
+  console.log(
+    `    uso de indices: ${Object.entries(hist)
+      .map(([k, v]) => `${k}:${((100 * v) / (size * size)).toFixed(1)}%`)
+      .join('  ')}`
+  );
+  console.log(`    fuera del circulo: ${outside.toFixed(1)}%`);
+  console.log(`    -> tools/checkradar.png (decodificado del .bin, no del preview)`);
+}
+
 async function main() {
   const { viewW, viewH, assets } = await readAssets();
   console.log(`Verificando la proyeccion contra src/MapAssets.h (viewport ${viewW}x${viewH})`);
@@ -115,6 +162,8 @@ async function main() {
   for (const a of assets) {
     await checkAsset(a, viewW, viewH);
   }
+
+  await checkRadarMap();
 
   console.log('\nAbri los check*.png: cada circulo tiene que caer sobre el lugar real.');
   console.log('Si estan corridos en vertical, el sospechoso es la formula de Mercator.');

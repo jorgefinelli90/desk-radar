@@ -72,12 +72,14 @@ más ahí).
   "MAPA" y "MÁS INFO". Tocás el que quieras y entra directo a esa pantalla
   (con fetch inmediato).
 - **Modo Radar**: pantalla circular centrada en tu casa
-  (`-34.5858006, -58.5917033`), radio 40 km, con barrido animado tipo radar
+  (`-34.5858006, -58.5917033`), **radio 20 km sobre un mapa real** recortado en
+  círculo, sin nombres de ciudades: el único punto rotulado es **El Palomar
+  (SADP)**. Con barrido animado tipo radar
   de aviación: una línea que gira 360° cada 3,5 s dejando una estela que se
   desvanece detrás. Cuando el barrido pasa por encima de un avión, el blip
   destella y se agranda un instante, como si lo acabara de detectar (es solo
   visual: no dispara ningún fetch). Los anillos están rotulados con su
-  distancia real (10/20/30/40 km), hay puntos cardinales N/E/S/O alrededor
+  distancia real (5/10/15/20 km), hay puntos cardinales N/E/S/O alrededor
   del círculo y una leyenda de color debajo. Refresca los datos cada 30s, y
   pasa a cada 5s automáticamente si detecta un avión a menos de 10 km. La
   animación es independiente del ciclo de fetch: el barrido sigue girando
@@ -150,7 +152,8 @@ flight-radar-esp32/
 │   └── UiRect.h                # helper de hit-testing para zonas táctiles
 ├── data/                    # se sube con "pio run -t uploadfs", no con el firmware
 │   ├── map80.bin            # mapa 80 km, RGB565 crudo (GENERADO)
-│   └── map40.bin            # mapa 40 km, RGB565 crudo (GENERADO)
+│   ├── map40.bin            # mapa 40 km, RGB565 crudo (GENERADO)
+│   └── radar.bin            # fondo del radar, 4 bpp indexado (GENERADO)
 ├── tools/
 │   ├── build-map.mjs        # baja los tiles y genera los .bin + MapAssets.h
 │   └── verify-map.mjs       # marca puntos conocidos para validar la proyección
@@ -196,12 +199,55 @@ Cada `.bin` son 240 × 262 × 2 = **125.760 bytes**; los dos suman 251 KB de la
 partición `spiffs` de 1,375 MB, que hasta ahora estaba totalmente vacía. No hace
 falta cambiar el esquema de particiones.
 
+### El mapa de fondo del radar
+
+El radar usa **otro archivo y otro formato**: `data/radar.bin`, de 200×200 px
+en **4 bpp indexado** (20.000 bytes), sin capa de etiquetas y recortado en
+círculo.
+
+El motivo es la RAM. El disco del radar es un `TFT_eSprite` de 4 bpp porque uno
+de 16 bpp costaría 80 KB y no convive con el handshake TLS. Así que el mapa se
+cuantiza a **5 grises** y se guarda **ya empaquetado con el layout exacto de
+TFT_eSprite** (`(x + y*w)>>1`, nibble alto para x par). El firmware lo carga una
+vez a RAM y después, en cada frame, lo mete al sprite con un `memcpy` en vez de
+convertir píxel por píxel:
+
+```
+RAM del radar:  20 KB (sprite) + 20 KB (copia del mapa) = 40 KB
+                contra los 80 KB que costaría un sprite de 16 bpp
+```
+
+Los 5 grises salen de **k-means sobre el histograma real**, no de una escala
+fija ni de cuantiles por población. El basemap oscuro tiene tres picos enormes
+(agua ~35, tierra ~71 y ~78) y las rutas viven dispersas entre 82 y 98 con
+poquísimos píxeles: repartir por población mete 4 de los 5 niveles dentro del
+rango 75-80 y **se come las rutas**, que son justo lo que hace reconocible el
+mapa. k-means encuentra los clusters reales (35, 60, 71, 78, 87). Después se
+estiran a `RADAR_STRETCH_MIN..MAX` para que se distingan en una TFT chica sin
+taparle el protagonismo a los blips.
+
+La paleta de 16 queda repartida así: índice 0 negro (fuera del círculo), 1-5
+los grises del mapa, y los 10 restantes para el radar. Por eso la estela tiene
+**3 bandas de brillo y no 7** como cuando el fondo era negro.
+
+Los aviones y El Palomar se ubican por **distancia + rumbo** (polar), no por
+Mercator, para que compartan el sistema de coordenadas de los anillos. Coincide
+con el mapa porque el generador usa la misma escala: `RADAR_RING_MAX / alcance`
+= 88 px / 20 km = 227,3 m/px, que es exactamente el m/px del recorte. A 20 km
+las dos proyecciones difieren menos de un píxel.
+
+⚠️ `RADAR_RANGE_KM` de `config.h` tiene que coincidir con el alcance con el que
+se generó el mapa. Si no, los anillos y el mapa quedan a distinta escala y los
+aviones caen sobre calles que no son. Hay un `static_assert` en
+`RadarScreen.cpp` que **no deja compilar** si se desincronizan.
+
 ### Geometría
 
 | Modo | Zoom | m/px nativo | m/px final | Fuente | Factor | Cobertura |
 |---|---|---|---|---|---|---|
 | 80 km | 9 | 251,7 | 333,3 | 318×347 | 0,755 | 80 × 87,3 km |
 | 40 km | 10 | 125,9 | 166,7 | 318×347 | 0,755 | 40 × 43,7 km |
+| radar | 10 | 125,9 | 227,3 | 361×361 | 0,554 | 45,5 km de lado (20 km de radio) |
 
 Los zooms nativos de OSM no caen justo en 80/40 km, así que se baja a mayor
 resolución y se reduce con Lanczos. Las etiquetas quedan a ~75% del tamaño de

@@ -37,3 +37,37 @@ static const MapAsset MAP_ASSETS[] = {
   { "/map40.bin", 10, 88247.8237, 157768.5569, 0.75471698f, 40 },
 };
 static const int MAP_ASSET_COUNT = sizeof(MAP_ASSETS) / sizeof(MAP_ASSETS[0]);
+
+// ---------------------------------------------------------------------------
+//  Mapa de fondo del radar
+// ---------------------------------------------------------------------------
+// Va aparte de MAP_ASSETS porque tiene otro formato: 4 bpp indexado y ya
+// empaquetado como lo espera TFT_eSprite, para poder meterlo al sprite con un
+// memcpy. Ademas viene sin etiquetas de ciudades y recortado en circulo.
+
+static const int RADAR_DISC_SIZE = 200;
+static const int RADAR_RING_MAX  = 88;
+
+// Alcance real del anillo exterior. Tiene que coincidir con RADAR_RANGE_KM de
+// config.h: RadarScreen.cpp lo verifica con un static_assert.
+static const int RADAR_MAP_RANGE_KM = 20;
+
+// (200 * 200) / 2 = 20.000 bytes
+static const uint32_t RADAR_MAP_BYTES =
+    (uint32_t)RADAR_DISC_SIZE * RADAR_DISC_SIZE / 2;
+
+static const MapAsset RADAR_MAP =
+    { "/radar.bin", 10, 88226.3237, 157761.5569, 0.55401662f, 20 };
+
+// Los 5 grises del mapa, en RGB565. Salen de los cuantiles del
+// histograma real de la imagen, no de una escala fija: el basemap oscuro usa un
+// rango angosto y repartir niveles parejos entre negro y blanco desperdiciaria
+// casi todos. Ocupan los indices 1..5 de la paleta del disco.
+static const int RADAR_MAP_GREY_COUNT = 5;
+static const uint16_t RADAR_MAP_GREYS[RADAR_MAP_GREY_COUNT] = {
+  0x10A2, // luminancia 20
+  0x39E7, // luminancia 61
+  0x4A69, // luminancia 79
+  0x5ACB, // luminancia 90
+  0x6B4D, // luminancia 105
+};

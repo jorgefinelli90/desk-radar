@@ -26,10 +26,13 @@ TouchManager   touch(display.tft());
 OpenSkyClient  opensky(OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET);
 NewsClient     newsClient(GNEWS_API_KEY);
 WeatherClient  weatherClient;
+// mapTiles va antes que las pantallas que lo usan: guardan una referencia, y el
+// orden de declaración es el orden de construcción dentro de la misma unidad.
+MapTiles       mapTiles(display);
 HomeScreen     homeScreen(display);
-RadarScreen    radarScreen(display);
+RadarScreen    radarScreen(display, mapTiles);
 AirportScreen  airportScreen(display);
-MapScreen      mapScreen(display);
+MapScreen      mapScreen(display, mapTiles);
 DetailScreen   detailScreen(display);
 InfoMenuScreen infoMenuScreen(display);
 NewsScreen     newsScreen(display);
@@ -150,7 +153,7 @@ void setup() {
   Serial.begin(115200);
   display.begin();
   touch.begin(); // corre el wizard de calibración la primera vez
-  mapScreen.begin(); // monta LittleFS con los mapas pre-renderizados
+  mapTiles.begin();  // monta LittleFS con los mapas pre-renderizados
   connectWiFi();
   renderCurrentMode(); // Home
 }

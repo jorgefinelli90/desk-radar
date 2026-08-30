@@ -32,6 +32,11 @@ class MapTiles {
     // r está en coordenadas de la IMAGEN (0,0 = esquina sup. izq. del mapa).
     bool pushRect(int assetIdx, const UiRect& r, int screenTop);
 
+    // Lee un archivo entero de LittleFS a un buffer del llamador. Lo usa el
+    // radar para cargar su mapa de 4 bpp una sola vez y después meterlo al
+    // sprite con un memcpy en cada frame.
+    bool loadRaw(const char* path, uint8_t* dst, size_t bytes);
+
   private:
     // 16 filas x 240 px x 2 bytes = 7.680 bytes. Con WiFi y TLS arriba no hay
     // lugar para mucho más, y a esta altura el overhead por banda es marginal.

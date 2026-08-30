@@ -15,10 +15,11 @@
 // del mismo fetch de OpenSky, así que cambiar de zoom no pide datos nuevos.
 class MapScreen {
   public:
-    explicit MapScreen(DisplayManager& display) : _display(display), _tiles(display) {}
-
-    // Monta LittleFS. Si falla, la pantalla sigue andando sobre fondo negro.
-    bool begin() { return _tiles.begin(); }
+    // MapTiles se recibe por referencia y no se construye acá: RadarScreen
+    // también lo usa para su mapa de fondo, y tener dos instancias duplicaría
+    // el buffer de banda de 7,7 KB al pedo.
+    MapScreen(DisplayManager& display, MapTiles& tiles)
+      : _display(display), _tiles(tiles) {}
 
     // Llamar al entrar desde otra pantalla: fuerza el redibujo completo.
     void onEnter();
@@ -44,7 +45,7 @@ class MapScreen {
     static const size_t MAX_PLANES = 60; // tope de seguridad para render/hit-test
 
     DisplayManager& _display;
-    MapTiles _tiles;
+    MapTiles& _tiles;
 
     int  _assetIdx = 0;          // 0 = 80 km, 1 = 40 km
     bool _needsFullRedraw = true;

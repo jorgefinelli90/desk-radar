@@ -19,7 +19,9 @@ static const double HOME_LAT = -34.5858006;
 static const double HOME_LON = -58.5917033;
 
 // --- Radar: alcance y refresco adaptativo ---
-static const double RADAR_RANGE_KM       = 40.0;  // radio máximo mostrado en el radar
+// constexpr y no const: RadarScreen.cpp lo compara con el alcance del mapa
+// generado en un static_assert, y para eso tiene que ser expresión constante.
+static constexpr double RADAR_RANGE_KM   = 20.0;  // radio máximo mostrado en el radar (debe coincidir con RADAR_MAP_RANGE_KM de MapAssets.h)
 static const double RADAR_NEAR_KM        = 10.0;  // distancia bajo la cual se considera "tráfico cercano"
 static const uint32_t REFRESH_NORMAL_MS  = 30000; // refresco normal (30s)
 static const uint32_t REFRESH_FAST_MS    = 5000;  // refresco cuando hay tráfico cercano (5s)
@@ -29,10 +31,10 @@ static const uint32_t REFRESH_FAST_MS    = 5000;  // refresco cuando hay tráfic
 // comparten el vector de aviones: cambiar de una pantalla a la otra no dispara
 // una request nueva.
 //
-// 45 km de radio cubre a la vez el radio de 40 km del radar y el recorte del
-// mapa en modo lejano (80 km de ancho x 87,3 km de alto, ver src/MapAssets.h).
-// Si tocás el viewport del mapa en tools/build-map.mjs, revisá que este radio
-// siga alcanzando.
+// El que manda es el Mapa en modo lejano (80 km de ancho x 87,3 km de alto,
+// ver src/MapAssets.h): 45 km de radio lo cubre entero, y de paso le sobra al
+// radar, que ahora llega a 20 km. Si tocás el viewport del mapa en
+// tools/build-map.mjs, revisá que este radio siga alcanzando.
 static const double HOME_FETCH_RADIUS_KM = 45.0;
 
 // --- Aeropuertos fijos para el modo "Aeropuertos" ---
@@ -98,8 +100,8 @@ static const int NEWS_TZ_OFFSET_H = -3;
 // vuelta; subir RADAR_FRAME_MS baja los FPS (y libera bus SPI para el touch).
 static const uint32_t RADAR_SWEEP_PERIOD_MS = 3500; // una vuelta completa
 static const uint32_t RADAR_FRAME_MS        = 45;   // ~22 fps (ver nota abajo)
-static const int      RADAR_TRAIL_DEG       = 70;   // largo de la estela
-static const int      RADAR_TRAIL_STEPS     = 7;    // bandas de brillo del trail
+static const int      RADAR_TRAIL_DEG       = 48;   // largo de la estela
+static const int      RADAR_TRAIL_STEPS     = 3;    // bandas de brillo (la paleta de 16 solo deja 3: el resto son grises del mapa)
 static const uint32_t RADAR_PING_MS         = 700;  // destello al ser detectado
 
 // Pausa del loop mientras el radar está en pantalla. El loop general usa 30 ms,

@@ -1,31 +1,67 @@
 #include "RadarScreen.h"
 #include "config.h"
+#include "GeoUtils.h"
 #include <math.h>
+#include <string.h>
 #include <algorithm>
 
-// Paleta de 16 colores del disco (sprite a 4 bpp). El orden tiene que coincidir
-// exactamente con el enum de índices de RadarScreen.h.
+// El mapa de fondo se genera con el alcance que dice MapAssets.h. Si alguien
+// cambia RADAR_RANGE_KM en config.h y no regenera el mapa, los anillos y el
+// mapa quedan a distinta escala y los aviones caen sobre calles que no son.
+// Mejor que directamente no compile.
+static_assert((int)RADAR_RANGE_KM == RADAR_MAP_RANGE_KM,
+              "RADAR_RANGE_KM (config.h) no coincide con el mapa generado. "
+              "Corre tools/build-map.mjs despues de cambiarlo.");
+
+// Paleta de 16 colores del disco (sprite a 4 bpp; a esa profundidad el "color"
+// que reciben las primitivas ES el indice). Se arma en runtime porque los
+// indices 1..5 son los grises del mapa, que salen del histograma real de la
+// imagen y llegan en RADAR_MAP_GREYS.
 //
-// Los 7 verdes del trail son verde puro con el canal G subiendo de 9 a 45 sobre
-// 63: en RGB565 el verde ocupa los bits 5..10, así que el color es (G << 5).
-static const uint16_t RADAR_PALETTE[16] = {
-  0x0000, // 0  C_BG      negro
-  0x01C0, // 1  C_RING    anillos (verde apagado)
-  0x2104, // 2  C_CROSS   cruz N-S / E-O (gris oscuro)
-  0x0120, // 3  C_TRAIL0  estela, la banda más tenue
-  0x01E0, // 4
-  0x02A0, // 5
-  0x0360, // 6
-  0x0420, // 7
-  0x04E0, // 8
-  0x05A0, // 9  C_TRAIL_TOP  la banda más viva de la estela
-  0x8FF1, // 10 C_EDGE    borde de ataque (verde casi blanco)
-  0x07E0, // 11 C_BLIP    avión normal (verde puro, más vivo que la estela)
-  0xF800, // 12 C_ALERT   avión dentro de RADAR_NEAR_KM
-  0xFFFF, // 13 C_PING    destello de detección
-  0xFFE0, // 14 C_HOME    casa
-  0x7BEF  // 15 C_LABEL   etiquetas
-};
+// Al radar le quedan 10 slots: de ahi que la estela tenga 3 bandas y no 7.
+void RadarScreen::buildPalette() {
+  _palette[C_BG] = 0x0000; // negro: fuera del circulo del mapa
+
+  for (int i = 0; i < RADAR_MAP_GREY_COUNT && i < 5; i++) {
+    _palette[C_MAP0 + i] = RADAR_MAP_GREYS[i];
+  }
+
+  // Los anillos van bastante mas vivos que cuando el fondo era negro: ahora
+  // tienen que leerse por encima del gris mas claro del mapa.
+  _palette[C_RING]       = 0x0640; // verde medio
+  _palette[C_TRAIL0]     = 0x0300; // estela tenue
+  _palette[C_TRAIL0 + 1] = 0x0540;
+  _palette[C_TRAIL_TOP]  = 0x0760; // estela viva
+  _palette[C_EDGE]       = 0x8FF1; // borde de ataque, verde casi blanco
+  _palette[C_BLIP]       = 0x07E0; // verde puro
+  _palette[C_ALERT]      = 0xF800; // rojo
+  _palette[C_PING]       = 0xFFFF; // blanco
+  _palette[C_HOME]       = 0xFFE0; // amarillo
+  _palette[C_LABEL]      = 0xC618; // plata
+}
+
+// El Palomar es el unico punto de referencia rotulado: el mapa de fondo se
+// genera sin la capa de etiquetas de Esri a proposito.
+//
+// Se ubica por distancia+rumbo igual que los aviones, y no por Mercator, para
+// que comparta exactamente el sistema de coordenadas de los blips. A 20 km de
+// alcance las dos proyecciones difieren menos de un pixel.
+void RadarScreen::computePalomar() {
+  const AirportDef* palomar = nullptr;
+  for (int i = 0; i < AIRPORT_COUNT; i++) {
+    if (strcmp(AIRPORTS[i].icao, "SADP") == 0) { palomar = &AIRPORTS[i]; break; }
+  }
+  if (!palomar) { _palomarInView = false; return; }
+
+  double d = GeoUtils::distanceKm(HOME_LAT, HOME_LON, palomar->lat, palomar->lon);
+  double b = GeoUtils::bearingDeg(HOME_LAT, HOME_LON, palomar->lat, palomar->lon);
+
+  if (d > RADAR_RANGE_KM) { _palomarInView = false; return; }
+
+  int r = (int)lround((d / RADAR_RANGE_KM) * RING_MAX);
+  polar((float)b, r, _palomarX, _palomarY, CENTER, CENTER);
+  _palomarInView = true;
+}
 
 void RadarScreen::polar(float deg, int r, int& x, int& y, int cx, int cy) {
   float a = deg * (float)PI / 180.0f;
@@ -81,9 +117,12 @@ void RadarScreen::ensureDisc() {
   if (_triedInit) return;
   _triedInit = true;
 
+  buildPalette();
+  computePalomar();
+
   _disc.setColorDepth(4);
   if (_disc.createSprite(DISC_SIZE, DISC_SIZE) != nullptr) {
-    _disc.createPalette(RADAR_PALETTE, 16);
+    _disc.createPalette(_palette, 16);
     _discReady = true;
     Serial.printf("[Radar] Sprite del disco OK (%d bytes), heap libre %u\n",
                   (DISC_SIZE * DISC_SIZE) / 2, (unsigned)ESP.getFreeHeap());
@@ -91,6 +130,28 @@ void RadarScreen::ensureDisc() {
     _discReady = false;
     Serial.printf("[Radar] Sin RAM para el sprite, voy a redibujo directo. Heap %u\n",
                   (unsigned)ESP.getFreeHeap());
+    return;
+  }
+
+  // Copia del mapa de fondo en RAM. Se lee una sola vez y despues cada frame la
+  // vuelca al sprite con un memcpy: releer 20 KB de LittleFS 22 veces por
+  // segundo seria 440 KB/s de flash para nada.
+  _mapRam = (uint8_t*)malloc(RADAR_MAP_BYTES);
+  if (!_mapRam) {
+    Serial.printf("[Radar] Sin RAM para el mapa de fondo (%u bytes), queda en negro\n",
+                  (unsigned)RADAR_MAP_BYTES);
+    _mapReady = false;
+    return;
+  }
+
+  _mapReady = _tiles.loadRaw(RADAR_MAP.path, _mapRam, RADAR_MAP_BYTES);
+  if (_mapReady) {
+    Serial.printf("[Radar] Mapa de fondo cargado (%u bytes), heap libre %u\n",
+                  (unsigned)RADAR_MAP_BYTES, (unsigned)ESP.getFreeHeap());
+  } else {
+    free(_mapRam);
+    _mapRam = nullptr;
+    Serial.println("[Radar] No se pudo cargar el mapa de fondo, el disco queda negro");
   }
 }
 
@@ -333,7 +394,14 @@ void RadarScreen::drawDiscSprite() {
   TFT_eSprite& s = _disc;
   uint32_t now = millis();
 
-  s.fillSprite(C_BG);
+  // Fondo: el mapa se vuelca de la copia en RAM directo al buffer del sprite.
+  // Los dos usan el mismo empaquetado de 4 bpp ((x + y*w)>>1, nibble alto para
+  // x par), asi que es un memcpy y no una conversion pixel por pixel.
+  if (_mapReady) {
+    memcpy(s.getPointer(), _mapRam, RADAR_MAP_BYTES);
+  } else {
+    s.fillSprite(C_BG);
+  }
 
   // Anillos de alcance
   for (int i = 1; i <= 4; i++) {
@@ -341,8 +409,8 @@ void RadarScreen::drawDiscSprite() {
   }
 
   // Cruz de referencia
-  s.drawFastVLine(CENTER, CENTER - RING_MAX, RING_MAX * 2, C_CROSS);
-  s.drawFastHLine(CENTER - RING_MAX, CENTER, RING_MAX * 2, C_CROSS);
+  s.drawFastVLine(CENTER, CENTER - RING_MAX, RING_MAX * 2, C_RING);
+  s.drawFastHLine(CENTER - RING_MAX, CENTER, RING_MAX * 2, C_RING);
 
   // Estela del barrido: cuñas de brillo creciente hacia el borde de ataque.
   // Cada cuña es un triángulo centro-borde; con 10 grados de ancho el error
@@ -387,13 +455,27 @@ void RadarScreen::drawDiscSprite() {
     s.drawString("km", lx + 14, ly, 1);
   }
 
-  // Puntos cardinales
+  // Puntos cardinales. Van fuera del anillo exterior, sobre el negro que deja
+  // el recorte circular del mapa, para que se lean limpios.
   {
     int x, y;
     polar(0,   CARD_R, x, y, CENTER, CENTER); s.drawString("N", x, y, 1);
     polar(90,  CARD_R, x, y, CENTER, CENTER); s.drawString("E", x, y, 1);
     polar(180, CARD_R, x, y, CENTER, CENTER); s.drawString("S", x, y, 1);
     polar(270, CARD_R, x, y, CENTER, CENTER); s.drawString("O", x, y, 1);
+  }
+
+  // El Palomar: unico punto de referencia rotulado. Simbolo de aeropuerto
+  // (circulo con pista cruzada) y la etiqueta corrida para no pisar la casa,
+  // que esta a solo ~3 km y queda muy cerca en pantalla.
+  if (_palomarInView) {
+    s.drawCircle(_palomarX, _palomarY, 4, C_PING);
+    s.drawLine(_palomarX - 3, _palomarY + 3, _palomarX + 3, _palomarY - 3, C_PING);
+
+    s.setTextDatum(ML_DATUM);
+    s.setTextColor(C_LABEL);
+    s.drawString("El Palomar", _palomarX + 7, _palomarY - 6, 1);
+    s.setTextDatum(MC_DATUM);
   }
 
   // Aviones, encima del barrido para que nunca queden tapados
