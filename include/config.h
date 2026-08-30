@@ -115,3 +115,27 @@ static const uint32_t RADAR_LOOP_DELAY_MS = 5;
 // Poner en 1 para que el radar informe por serie cuánto tarda cada frame y a
 // cuántos fps está yendo. Útil si querés retocar SWEEP_PERIOD_MS / FRAME_MS.
 #define RADAR_DEBUG_TIMING 0
+
+// --- Configuración por web / portal cautivo ---
+// Si no hay credenciales WiFi en NVS, el ESP32 arranca como Access Point con
+// este nombre y sirve un portal cautivo para configurarlo desde el celular.
+// Dejar SETUP_AP_PASSWORD en "" para que el AP quede abierto (ojo: WPA2 pide
+// mínimo 8 caracteres, una clave más corta hace fallar el softAP en silencio).
+#define SETUP_AP_SSID     "DeskRadar-Setup"
+#define SETUP_AP_PASSWORD "radar1234"
+
+// Hostname de mDNS: el dispositivo queda en http://desk-radar.local/
+#define DEVICE_HOSTNAME   "desk-radar"
+
+// --- Banner de mensajes ---
+// Tiempos de la animación del banner que aparece cuando llega un mensaje por
+// POST /api/message.
+static const uint32_t BANNER_SLIDE_MS = 280;   // entrada y salida
+static const uint32_t BANNER_HOLD_MS  = 5500;  // cuánto queda quieto
+static const uint32_t BANNER_FRAME_MS = 25;    // ~40 fps mientras se desliza
+
+// Poner en 1 para entrar al portal de configuración aunque ya haya WiFi
+// guardado. Sirve para probar o retocar el portal sin borrar NVS (o sea, sin
+// perder la calibración del touch, que vive en la misma partición).
+// Acordate de volverlo a 0: con esto en 1 el dispositivo nunca conecta.
+#define FORCE_SETUP_PORTAL 0

@@ -3,7 +3,10 @@
 #include <vector>
 
 #include "config.h"
-#include "secrets.h"       // copiá secrets.h.example -> secrets.h y completá tus datos
+#include "DeviceConfig.h"  // credenciales en NVS (reemplaza a secrets.h)
+#include "WebPortal.h"
+#include "Banner.h"
+#include "SettingsScreen.h"
 #include "GeoUtils.h"
 #include "OpenSkyClient.h"
 #include "DisplayManager.h"
@@ -19,13 +22,16 @@
 #include "WeatherClient.h"
 #include "WeatherScreen.h"
 
-enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, Weather };
+enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, Weather, Settings };
 
 DisplayManager display;
 TouchManager   touch(display.tft());
-OpenSkyClient  opensky(OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET);
-NewsClient     newsClient(GNEWS_API_KEY);
+OpenSkyClient  opensky;      // credenciales desde NVS, ya no del compilador
+NewsClient     newsClient;   // idem
 WeatherClient  weatherClient;
+WebPortal      webPortal(display, deviceConfig);
+Banner         banner(display);
+SettingsScreen settingsScreen(display);
 // mapTiles va antes que las pantallas que lo usan: guardan una referencia, y el
 // orden de declaración es el orden de construcción dentro de la misma unidad.
 MapTiles       mapTiles(display);
@@ -50,9 +56,14 @@ uint32_t lastFetch = 0;
 bool fastMode = false;
 
 void connectWiFi() {
-  display.showMessage("Conectando WiFi...");
+  String ssid = deviceConfig.get("ssid");
+  String pass = deviceConfig.get("pass");
+  if (ssid.length() == 0) return; // sin config no hay a qué conectarse
+
+  display.showMessage("Conectando a " + ssid + "...");
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.setHostname(DEVICE_HOSTNAME);
+  WiFi.begin(ssid.c_str(), pass.c_str());
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
@@ -80,12 +91,14 @@ void fetchForCurrentMode() {
     auto box = GeoUtils::boundingBox(HOME_LAT, HOME_LON, HOME_FETCH_RADIUS_KM);
     if (opensky.fetchStates(box, aircraft)) {
       enrichWithGeo(aircraft, HOME_LAT, HOME_LON);
+      webPortal.noteFetchOk();
     }
   } else if (currentMode == Mode::Airports) {
     const AirportDef& ap = AIRPORTS[currentAirportIdx];
     auto box = GeoUtils::boundingBox(ap.lat, ap.lon, ap.boxRadiusKm);
     if (opensky.fetchStates(box, aircraft)) {
       enrichWithGeo(aircraft, HOME_LAT, HOME_LON); // distancia mostrada siempre relativa a casa
+      webPortal.noteFetchOk();
     }
   } else if (currentMode == Mode::News) {
     // Cada cliente decide solo si le toca pedir o si el cache sigue vigente
@@ -112,6 +125,9 @@ void renderCurrentMode() {
     newsScreen.render(newsClient);
   } else if (currentMode == Mode::Weather) {
     weatherScreen.render(weatherClient);
+  } else if (currentMode == Mode::Settings) {
+    settingsScreen.render(WiFi.SSID(), WiFi.localIP().toString(),
+                          webPortal.hostname());
   } else {
     airportScreen.render(AIRPORTS[currentAirportIdx], aircraft, fastMode);
   }
@@ -142,8 +158,9 @@ void enterMode(Mode m) {
   // de dejar la pantalla en negro mientras va la request.
   if (m == Mode::News)         display.showMessage("Buscando titulares...");
   else if (m == Mode::Weather) display.showMessage("Consultando el clima...");
-  else if (m == Mode::Radar)   radarScreen.onEnter(); // limpia y reinicia el barrido
-  else if (m == Mode::Map)     mapScreen.onEnter();   // fuerza el redibujo del mapa
+  else if (m == Mode::Radar)    radarScreen.onEnter(); // limpia y reinicia el barrido
+  else if (m == Mode::Map)      mapScreen.onEnter();   // fuerza el redibujo del mapa
+  else if (m == Mode::Settings) settingsScreen.onEnter();
 
   fetchForCurrentMode();
   renderCurrentMode();
@@ -152,15 +169,85 @@ void enterMode(Mode m) {
 void setup() {
   Serial.begin(115200);
   display.begin();
-  touch.begin(); // corre el wizard de calibración la primera vez
-  mapTiles.begin();  // monta LittleFS con los mapas pre-renderizados
+  touch.begin();      // corre el wizard de calibración la primera vez
+  deviceConfig.begin(); // credenciales desde NVS
+  mapTiles.begin();   // monta LittleFS con los mapas pre-renderizados
+
+  // Sin WiFi configurado no hay nada que mostrar: se levanta el Access Point y
+  // el portal cautivo, y no se vuelve de acá (el ESP32 se reinicia cuando el
+  // usuario guarda la configuración desde el navegador).
+  if (FORCE_SETUP_PORTAL || !deviceConfig.hasWifi()) {
+    Serial.println(FORCE_SETUP_PORTAL
+                     ? "[Setup] FORCE_SETUP_PORTAL=1: arranco el portal a proposito"
+                     : "[Setup] Sin WiFi configurado: arranco el portal");
+    webPortal.runSetupPortal();
+  }
+
   connectWiFi();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    webPortal.startDashboard();
+  } else {
+    // Nos quedamos en modo cliente igual: la red puede volver sola y el loop
+    // reintenta. Entrar al portal por un corte de WiFi sería peor: perderíamos
+    // la configuración buena por un problema temporal.
+    Serial.println("[Setup] No conecto ahora. Reintenta solo; para reconfigurar,"
+                   " usa AJUSTES en la pantalla.");
+  }
+
   renderCurrentMode(); // Home
 }
 
 void loop() {
+  // Servidor web. handleClient() es una máquina de estados: si no hay cliente
+  // vuelve enseguida, así que no le roba latencia al touch.
+  webPortal.tick();
+
+  // ¿Llegó un mensaje por POST /api/message? El handler corre en este mismo
+  // hilo (lo llama webPortal.tick()), así que no hace falta cola ni mutex.
+  String incoming;
+  if (webPortal.takeMessage(incoming)) {
+    banner.show(incoming);
+  }
+
+  // El banner se dibuja encima de lo que haya. Mientras está activo se sigue
+  // atendiendo el touch, pero no se procesan toques: son casi siempre el
+  // reflejo de querer sacarlo de encima, no de navegar.
+  if (banner.active()) {
+    banner.tick();
+    uint16_t bx = 0, by = 0;
+    touch.getTap(bx, by); // consumir el tap para que no dispare después
+    delay(5);
+    return;
+  }
+
+  // Terminó la animación: hay que repintar la pantalla que quedó abajo.
+  if (banner.takeRepaintRequest()) {
+    if (currentMode == Mode::Radar)    radarScreen.onEnter();
+    else if (currentMode == Mode::Map) mapScreen.onEnter();
+    renderCurrentMode();
+  }
+
   uint16_t tx = 0, ty = 0;
   bool tapped = touch.getTap(tx, ty);
+
+  // Ajustes: muestra red/IP y permite borrar la config de WiFi con dos toques.
+  if (currentMode == Mode::Settings) {
+    if (tapped) {
+      if (ty < DisplayManager::STATUS_BAR_HEIGHT) {
+        goHome();
+      } else if (settingsScreen.handleTap(tx, ty)) {
+        // Segundo toque confirmado: borrar y volver al portal
+        display.showMessage("Borrando WiFi...");
+        deviceConfig.clearWifi();
+        delay(700);
+        ESP.restart();
+      }
+    }
+    settingsScreen.tick(); // vence la confirmación si el usuario se fue
+    delay(30);
+    return;
+  }
 
   if (currentMode == Mode::Home) {
     if (tapped) {
@@ -174,6 +261,8 @@ void loop() {
         enterMode(Mode::Map);
       } else if (choice == HomeChoice::Info) {
         enterMode(Mode::InfoMenu);
+      } else if (choice == HomeChoice::Settings) {
+        enterMode(Mode::Settings);
       }
     }
     delay(30);

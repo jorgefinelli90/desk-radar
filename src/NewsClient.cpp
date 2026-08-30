@@ -1,6 +1,7 @@
 #include "NewsClient.h"
 #include "config.h"
 #include "TextUtils.h"
+#include "DeviceConfig.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -34,6 +35,13 @@ bool NewsClient::refresh() {
   _everTried = true;
   _lastTryMs = millis();
 
+  String apiKey = deviceConfig.get("gnews");
+  if (apiKey.length() == 0) {
+    _lastError = "Falta la API key";
+    Serial.println("[News] Sin API key. Cargala en http://desk-radar.local/config");
+    return false;
+  }
+
   WiFiClientSecure client;
   client.setInsecure(); // MVP: sin validar certificado, igual que OpenSkyClient
 
@@ -41,7 +49,7 @@ bool NewsClient::refresh() {
   char url[320];
   snprintf(url, sizeof(url),
     "%s?category=%s&lang=%s&country=%s&max=%d&apikey=%s",
-    GNEWS_URL, NEWS_CATEGORY, NEWS_LANG, NEWS_COUNTRY, NEWS_MAX_ITEMS, _apiKey);
+    GNEWS_URL, NEWS_CATEGORY, NEWS_LANG, NEWS_COUNTRY, NEWS_MAX_ITEMS, apiKey.c_str());
 
   if (!http.begin(client, url)) {
     _lastError = "Sin conexion";

@@ -13,7 +13,9 @@ struct NewsItem {
 // si la pantalla queda puesta un rato largo.
 class NewsClient {
   public:
-    explicit NewsClient(const char* apiKey) : _apiKey(apiKey) {}
+    // La API key se lee de NVS en cada refresh (ver DeviceConfig), no del
+    // compilador: se puede cambiar desde el navegador sin recompilar.
+    NewsClient() = default;
 
     // true si conviene volver a pedir: nunca pedimos, el cache venció, o el
     // último intento falló y ya pasó el tiempo de reintento.
@@ -27,7 +29,6 @@ class NewsClient {
     const String& lastError() const { return _lastError; }
 
   private:
-    const char* _apiKey;
     std::vector<NewsItem> _items;
 
     bool     _ok = false;            // el último refresh trajo datos buenos

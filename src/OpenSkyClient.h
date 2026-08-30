@@ -20,7 +20,10 @@ struct AircraftState {
 
 class OpenSkyClient {
   public:
-    OpenSkyClient(const char* clientId, const char* clientSecret);
+    // Las credenciales ya no vienen del compilador: se leen de NVS en runtime
+    // (ver DeviceConfig), asi que se pueden cambiar desde el navegador sin
+    // recompilar. Se releen en cada pedido de token.
+    OpenSkyClient() = default;
 
     // Pide un token nuevo si no hay uno vigente. Devuelve false si falla.
     bool ensureToken();
@@ -29,8 +32,6 @@ class OpenSkyClient {
     bool fetchStates(const GeoUtils::BBox& box, std::vector<AircraftState>& out);
 
   private:
-    const char* _clientId;
-    const char* _clientSecret;
     String  _accessToken;
     uint32_t _tokenExpiresAt = 0; // millis() en el que expira (con margen)
 

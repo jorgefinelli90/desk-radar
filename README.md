@@ -39,12 +39,16 @@ más ahí).
 
 ## Setup
 
+> **No hace falta editar código para configurar el dispositivo.** WiFi y API
+> keys se cargan desde el navegador y se guardan en NVS. Ver
+> [Configuración inicial](#configuración-inicial).
+
 1. Instalá [PlatformIO](https://platformio.org/) (extensión de VS Code o CLI).
-2. Copiá `include/secrets.h.example` a `include/secrets.h` y completá tu
-   WiFi. Las credenciales de OpenSky ya vienen cargadas (client id/secret
-   generados en tu cuenta OpenSky → *My OpenSky* → *API Client*). Para la
-   pantalla de noticias también hace falta una API key de GNews (ver
-   [APIs usadas](#apis-usadas)); el clima no necesita ninguna.
+2. *(Opcional, solo para desarrollar)* Copiá `include/secrets.h.example` a
+   `include/secrets.h` y completá tus datos. Si ese archivo existe, sus valores
+   se precargan en NVS **una sola vez** en el primer arranque, para no tener que
+   pasar por el portal cada vez que reflasheás. El dispositivo final no lo
+   necesita para nada.
 3. Generá el mapa del modo Mapa (una sola vez, o cada vez que muevas el área):
    ```bash
    cd tools && npm install && node build-map.mjs && cd ..
@@ -63,14 +67,103 @@ más ahí).
    valor distinto al que ya estaba, el wizard de calibración táctil se vuelve
    a correr solo (la calibración vieja no sirve para la orientación nueva).
 
+## Configuración inicial
+
+El dispositivo no tiene ninguna credencial compilada adentro: todo vive en NVS
+y se carga desde el navegador.
+
+### 1. Primer arranque: portal cautivo
+
+Si no hay WiFi guardado, el ESP32 levanta su propio Access Point y muestra en la
+pantalla a qué red conectarte:
+
+```
+        CONFIGURACION
+   Conectate con el celular
+        a esta red WiFi:
+
+      DeskRadar-Setup
+       Clave: radar1234
+
+  Se abre solo el navegador.
+        Si no, entra a:
+         192.168.4.1
+```
+
+Conectás el celular a **DeskRadar-Setup** (clave `radar1234`) y el sistema
+operativo abre solo el navegador con el formulario — es un portal cautivo real:
+un DNS comodín resuelve cualquier dominio a la IP del ESP32, y las URLs que
+Android/iOS/Windows usan para detectar internet (`/generate_204`,
+`/hotspot-detect.html`, `/ncsi.txt`, …) devuelven un redirect. Si tu celular no
+lo abre solo, entrá a `http://192.168.4.1/`.
+
+El formulario pide:
+
+| Campo | Para qué |
+|---|---|
+| Red WiFi + Contraseña | la red de casa, 2,4 GHz |
+| OpenSky Client ID + Secret | tráfico aéreo ([cómo obtenerlos](#apis-usadas)) |
+| GNews API key | titulares (opcional) |
+
+Al guardar, se persiste en NVS y el ESP32 se reinicia y se conecta solo.
+
+### 2. Después: `desk-radar.local`
+
+Ya conectado a tu red, el dispositivo publica mDNS y queda en
+**http://desk-radar.local/** (también funciona la IP, que se ve en la pantalla
+AJUSTES).
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /` | estado: red, IP, señal, uptime, último fetch de OpenSky, heap libre |
+| `GET /config` | el mismo formulario, para cambiar cualquier cosa sin volver al AP |
+| `POST /config` | guarda. Si cambió el WiFi, avisa y reinicia |
+| `GET /message` | textarea para mandar un mensaje a la pantalla |
+| `POST /api/message` | recibe el texto (`text=...`), responde `{"ok":true}` |
+
+Los campos de tipo contraseña nunca se mandan al navegador: si ya hay uno
+guardado se ve el placeholder *(guardado - dejar vacio para no cambiar)*, y
+dejarlo vacío no lo borra.
+
+### 3. Mandar un mensaje a la pantalla
+
+Desde el navegador, en `http://desk-radar.local/message`: escribís, apretás
+enviar y aparece un toast *Enviado*.
+
+Desde la terminal:
+
+```bash
+curl -X POST http://desk-radar.local/api/message \
+     -d "text=Hola! Sali a mirar, esta pasando un avion bajo"
+```
+
+El mensaje entra en la pantalla como un banner que baja deslizándose, se queda
+unos 5,5 segundos y se retira, **encima de la pantalla que estuviera activa**
+(Home, Radar, Mapa, la que sea). Al terminar, esa pantalla se repinta limpia.
+
+### 4. Resetear la configuración
+
+En el dispositivo: **AJUSTES → "Reiniciar config WiFi"**. Pide un segundo toque
+para confirmar (un toque accidental no puede dejarte sin red), borra las
+credenciales de NVS y reinicia en modo AP.
+
+Para probar el portal sin borrar nada, poné `FORCE_SETUP_PORTAL` en `1` en
+`include/config.h`: entra al AP aunque haya WiFi guardado. Acordate de volverlo
+a `0`.
+
 ## Cómo funciona
 
 - **Al encender**: si es la primera vez, corre un wizard de calibración
   táctil (te pide tocar 3 cruces). Se guarda en la memoria NVS del ESP32,
   así que solo pasa una vez (y se repite si cambiás `SCREEN_ROTATION`).
-- **Pantalla Home**: cuatro botones grandes — "RADAR", "AEROPUERTOS",
-  "MAPA" y "MÁS INFO". Tocás el que quieras y entra directo a esa pantalla
+- **Pantalla Home**: cinco botones grandes — "RADAR", "AEROPUERTOS", "MAPA",
+  "MÁS INFO" y "AJUSTES". Tocás el que quieras y entra directo a esa pantalla
   (con fetch inmediato).
+- **Pantalla Ajustes**: muestra la red conectada, la IP local y la dirección
+  `desk-radar.local`, más un botón para borrar la configuración de WiFi y
+  volver al portal (ver [Configuración inicial](#configuración-inicial)).
+- **Banner de mensajes**: los mensajes que llegan por `POST /api/message`
+  aparecen deslizándose desde arriba sobre cualquier pantalla, sin romperla.
 - **Modo Radar**: pantalla circular centrada en tu casa
   (`-34.5858006, -58.5917033`), **radio 20 km sobre un mapa real** recortado en
   círculo, sin nombres de ciudades: el único punto rotulado es **El Palomar
@@ -131,6 +224,10 @@ flight-radar-esp32/
 │   └── secrets.h            # tus credenciales reales (gitignored)
 ├── src/
 │   ├── main.cpp                # loop principal, navegación táctil, refresco adaptativo
+│   ├── DeviceConfig.{h,cpp}    # credenciales en NVS + tabla de campos del formulario
+│   ├── WebPortal.{h,cpp}       # portal cautivo (AP) + dashboard web + mDNS
+│   ├── SettingsScreen.{h,cpp}  # pantalla AJUSTES + reset de WiFi con confirmación
+│   ├── Banner.{h,cpp}          # banner animado de mensajes
 │   ├── OpenSkyClient.{h,cpp}   # OAuth2 + fetch de /states/all
 │   ├── GeoUtils.h              # haversine, bearing, bounding box
 │   ├── DisplayManager.{h,cpp}  # init TFT + status bar
@@ -344,6 +441,87 @@ Devuelve además la condición como
 pantalla la muestra sin necesidad de NTP ni RTC.
 
 ## Notas de implementación
+
+### Por qué el servidor web es sincrónico y no ESPAsyncWebServer
+
+Se usa el `WebServer` del core de ESP32, no `ESPAsyncWebServer` + `AsyncTCP`.
+El motivo de mirar async era no bloquear el loop de 30 ms, pero
+`WebServer::handleClient()` **ya es una máquina de estados**:
+
+```cpp
+void WebServer::handleClient() {
+  if (_currentStatus == HC_NONE) {
+    _currentClient = _server.available();
+    if (!_currentClient) { ...; return; }       // sin cliente: vuelve ya
+  }
+  ...
+  case HC_WAIT_READ:
+    if (_currentClient.available()) { _parseRequest(...); _handleRequest(); }
+    else if (millis() - _statusChange <= HTTP_MAX_DATA_WAIT) {
+      keepCurrentClient = true;                 // espera ENTRE llamadas, no adentro
+    }
+}
+```
+
+Si no hay cliente vuelve enseguida; si el cliente todavía no mandó datos, lo
+guarda y **retorna** en vez de esperar. Solo procesa cuando los datos ya
+llegaron. Además se llama `enableDelay(false)`, porque si no mete un `delay(1)`
+en cada vuelta del loop (y el radar corre con `delay(5)`).
+
+Ventajas concretas de esta decisión:
+
+- **Dos dependencias menos.** `AsyncTCP` en ESP32 arrastra una historia de
+  cuelgues y stack overflows.
+- **Los handlers corren en el hilo del loop**, porque los llama `handleClient()`
+  desde `tick()`. O sea que pasar el mensaje del POST a la pantalla es asignar
+  una variable: **no hace falta ni cola de FreeRTOS ni mutex**, y con eso se va
+  toda una clase de bugs de concurrencia.
+- El portal cautivo, el dashboard y el formulario comparten un solo servidor y
+  un solo diseño HTML.
+
+También se descartó **WiFiManager (tzapu)**: no está en el registro de
+PlatformIO (habría que pinnear una URL de git), y con `WiFiManagerParameter`
+habría que mantener el formulario del portal **y** el del dashboard por
+separado. Todo lo que hacía falta ya está en el core: `DNSServer`, `WebServer`,
+`Preferences` y `ESPmDNS`.
+
+### La tabla de campos: agregar una API key es una fila
+
+`CONFIG_FIELDS` en `src/DeviceConfig.cpp` es la única fuente de verdad. De ahí
+salen el formulario del portal cautivo, el de `/config`, el guardado en NVS y la
+detección de "cambió el WiFi, hay que reiniciar":
+
+```cpp
+static const DeviceConfig::Field CONFIG_FIELDS[] = {
+  // clave NVS   name    etiqueta                 ayuda   secreto  es_wifi
+  { "wifi_ssid", "ssid", "Red WiFi",              "...",  false,   true  },
+  { "os_secret", "ossec","OpenSky Client Secret", "",     true,    false },
+  // ← agregar acá: aparece solo en los dos formularios
+};
+```
+
+⚠️ Las claves de NVS no pueden pasar de **15 caracteres**.
+
+### El marcador `seeded`
+
+`include/secrets.h` sigue existiendo como comodidad de desarrollo, pero solo
+precarga NVS **una vez en la vida del dispositivo**, marcado con una flag
+`seeded` en NVS.
+
+Sin ese marcador el botón *"Reiniciar config WiFi"* quedaría roto en cualquier
+equipo que tenga `secrets.h`: `clearWifi()` deja el SSID vacío, y en el arranque
+siguiente la precarga lo volvería a llenar, así que el reset se desharía solo y
+en silencio.
+
+### Partición `huge_app`
+
+Con el esquema `default` la app tenía 1,31 MB y ya estaba al 83%: el portal web
+no entraba. Se pasó a `huge_app.csv` (3 MB de app, sin slot OTA, que no se usa).
+
+⚠️ Eso mueve la partición `spiffs` de `0x290000` a `0x310000`, así que después
+de este cambio hay que correr **`pio run -t uploadfs` una vez más**. La
+partición `nvs` sigue en `0x9000` en los dos esquemas, así que la calibración
+del touch y la configuración guardada sobreviven.
 
 ### Radar: por qué un sprite parcial a 4 bits
 

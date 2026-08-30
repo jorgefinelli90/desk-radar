@@ -1,11 +1,9 @@
 #include "OpenSkyClient.h"
 #include "config.h"
+#include "DeviceConfig.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-
-OpenSkyClient::OpenSkyClient(const char* clientId, const char* clientSecret)
-  : _clientId(clientId), _clientSecret(clientSecret) {}
 
 bool OpenSkyClient::ensureToken() {
   // Renueva con 60s de margen antes de que expire
@@ -27,9 +25,19 @@ bool OpenSkyClient::requestNewToken() {
 
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
+  // Se leen de NVS en cada intento: si el usuario las corrige desde el
+  // navegador, el proximo token ya sale con las nuevas sin reiniciar.
+  String id     = deviceConfig.get("osid");
+  String secret = deviceConfig.get("ossec");
+  if (id.length() == 0 || secret.length() == 0) {
+    Serial.println("[OpenSky] Faltan las credenciales. Cargalas en http://desk-radar.local/config");
+    http.end();
+    return false;
+  }
+
   String body = "grant_type=client_credentials";
-  body += "&client_id=" + String(_clientId);
-  body += "&client_secret=" + String(_clientSecret);
+  body += "&client_id=" + id;
+  body += "&client_secret=" + secret;
 
   int code = http.POST(body);
   if (code != 200) {
