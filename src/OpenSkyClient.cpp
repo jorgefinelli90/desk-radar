@@ -86,20 +86,13 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
     return false;
   }
 
-  // Respuesta puede ser grande: usamos filtro para quedarnos solo con lo que
-  // necesitamos y no reventar la RAM del C3.
-  JsonDocument filter;
-  filter["states"][0][0] = true; // icao24
-  filter["states"][0][1] = true; // callsign
-  filter["states"][0][5] = true; // lon
-  filter["states"][0][6] = true; // lat
-  filter["states"][0][7] = true; // baro_altitude
-  filter["states"][0][8] = true; // on_ground
-  filter["states"][0][9] = true; // velocity
-
+  // Nota: en versiones anteriores acá había un filtro de ArduinoJson para
+  // ahorrar RAM (pensado para el ESP32-C3 original). Se sacó a propósito:
+  // el filtro por índice numérico reindexa el array resultante desde 0,
+  // así que s[5]/s[6]/etc dejaban de corresponder a lon/lat reales. Con el
+  // ESP32 WROOM/WROVER actual sobra RAM para parsear el JSON completo.
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream(),
-                                              DeserializationOption::Filter(filter));
+  DeserializationError err = deserializeJson(doc, http.getStream());
   http.end();
 
   if (err) {
