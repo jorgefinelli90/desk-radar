@@ -13,12 +13,15 @@ class TouchManager {
     // con anti-rebote. Llena x,y en coordenadas de pantalla.
     bool getTap(uint16_t& x, uint16_t& y);
 
+    // Rehace la calibración a pedido (botón en Ajustes) y la deja aplicada,
+    // sin tener que reflashear con FORCE_TOUCH_CALIBRATION.
+    void recalibrate();
+
   private:
     TFT_eSPI& _tft;
     uint16_t _calData[5] = {0, 0, 0, 0, 0};
     bool _wasTouched = false;
-    uint32_t _lastTapMs = 0;
-    static const uint32_t DEBOUNCE_MS = 250;
+    uint32_t _lastTapMs = 0; // ventana anti-rebote: TOUCH_DEBOUNCE_MS en config.h
 
     bool loadCalibration();
     void saveCalibration();

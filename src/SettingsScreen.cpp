@@ -33,10 +33,28 @@ void SettingsScreen::render(const String& ssid, const String& ip,
   tft.drawString("Tambien entra por la IP si el .local", 12, y + 2, 1);
   tft.drawString("no te resuelve (Android viejo).", 12, y + 14, 1);
 
-  // Botón de reset abajo de todo, lejos del resto, para que no se toque solo
-  const int btnH = 46;
-  _resetBtn = { 12, (int)tft.height() - btnH - 12, (int)tft.width() - 24, btnH };
+  // Los dos botones abajo de todo, lejos del resto, para que no se toquen solos.
+  // El de borrar WiFi va último (el más peligroso, el más lejos del contenido).
+  const int resetH = 46;
+  const int calH   = 38;
+  _resetBtn = { 12, (int)tft.height() - resetH - 12, (int)tft.width() - 24, resetH };
+  _calBtn   = { 12, _resetBtn.y - calH - 8,          (int)tft.width() - 24, calH };
+  drawCalButton();
   drawResetButton();
+}
+
+void SettingsScreen::drawCalButton() {
+  TFT_eSPI& tft = _display.tft();
+  const UiRect& r = _calBtn;
+
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 10, TFT_NAVY);
+  tft.drawRoundRect(r.x, r.y, r.w, r.h, 10, TFT_BLUE);
+
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("Recalibrar touch", r.x + r.w / 2, r.y + r.h / 2 - 6, 2);
+  tft.setTextColor(TFT_CYAN, TFT_NAVY);
+  tft.drawString("si tocas y responde al lado", r.x + r.w / 2, r.y + r.h / 2 + 11, 1);
 }
 
 void SettingsScreen::drawResetButton() {
@@ -63,24 +81,30 @@ void SettingsScreen::drawResetButton() {
   }
 }
 
-bool SettingsScreen::handleTap(uint16_t x, uint16_t y) {
+SettingsAction SettingsScreen::handleTap(uint16_t x, uint16_t y) {
+  // Cualquier toque que no sea sobre el botón de borrado cancela la
+  // confirmación pendiente, incluido el de recalibrar.
+  if (!_resetBtn.contains(x, y) && _confirming) {
+    _confirming = false;
+    drawResetButton();
+  }
+
+  if (_calBtn.contains(x, y)) {
+    return SettingsAction::Recalibrate;
+  }
+
   if (!_resetBtn.contains(x, y)) {
-    // Tocar fuera del botón cancela la confirmación pendiente
-    if (_confirming) {
-      _confirming = false;
-      drawResetButton();
-    }
-    return false;
+    return SettingsAction::None;
   }
 
   if (!_confirming) {
     _confirming = true;
     _confirmStartMs = millis();
     drawResetButton();
-    return false; // primer toque: solo arma la confirmación
+    return SettingsAction::None; // primer toque: solo arma la confirmación
   }
 
-  return true; // segundo toque sobre el botón ya armado
+  return SettingsAction::ResetWifi; // segundo toque sobre el botón ya armado
 }
 
 bool SettingsScreen::tick() {

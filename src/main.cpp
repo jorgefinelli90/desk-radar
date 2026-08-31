@@ -144,25 +144,44 @@ static bool sharesAircraftData(Mode a, Mode b) {
   return usesHomeBox(a) && usesHomeBox(b);
 }
 
+// Cartel a mostrar mientras corre el fetch de entrada, o nullptr si esa
+// pantalla no va a hacerte esperar (no usa red, no hay red, o su cache sigue
+// vigente y refresh() va a volver enseguida).
+static const char* pendingFetchMessage(Mode m) {
+  if (WiFi.status() != WL_CONNECTED) return nullptr;
+  switch (m) {
+    case Mode::Radar:
+    case Mode::Map:      return "Buscando aviones...";
+    case Mode::Airports: return "Consultando el aeropuerto...";
+    case Mode::News:     return newsClient.shouldRefresh() ? "Buscando titulares..." : nullptr;
+    case Mode::Weather:  return weatherClient.shouldRefresh() ? "Consultando el clima..." : nullptr;
+    default:             return nullptr; // Home, Detail, InfoMenu, Settings: sin red de por medio
+  }
+}
+
 void enterMode(Mode m) {
   Mode previous = currentMode;
   currentMode = m;
 
   // Radar y Mapa comparten el recuadro: pasar de uno al otro reusa los aviones
   // que ya tenemos en vez de gastar otra llamada a OpenSky y hacerte esperar.
-  if (!sharesAircraftData(previous, m)) {
+  const bool reusesData = sharesAircraftData(previous, m);
+  if (!reusesData) {
     lastFetch = 0; // fuerza un fetch inmediato al entrar
   }
 
-  // Noticias y clima tardan un par de segundos en responder: avisamos en vez
-  // de dejar la pantalla en negro mientras va la request.
-  if (m == Mode::News)         display.showMessage("Buscando titulares...");
-  else if (m == Mode::Weather) display.showMessage("Consultando el clima...");
-  else if (m == Mode::Radar)    radarScreen.onEnter(); // limpia y reinicia el barrido
+  if (m == Mode::Radar)         radarScreen.onEnter(); // limpia y reinicia el barrido
   else if (m == Mode::Map)      mapScreen.onEnter();   // fuerza el redibujo del mapa
   else if (m == Mode::Settings) settingsScreen.onEnter();
 
-  fetchForCurrentMode();
+  if (!reusesData) {
+    // El fetch bloquea varios segundos. Sin este cartel la pantalla anterior
+    // queda congelada tal cual estaba y el toque parece no haber entrado.
+    const char* waiting = pendingFetchMessage(m);
+    if (waiting) display.showMessage(waiting);
+    fetchForCurrentMode();
+  }
+
   renderCurrentMode();
 }
 
@@ -231,17 +250,24 @@ void loop() {
   uint16_t tx = 0, ty = 0;
   bool tapped = touch.getTap(tx, ty);
 
-  // Ajustes: muestra red/IP y permite borrar la config de WiFi con dos toques.
+  // Ajustes: muestra red/IP, recalibra el touch y permite borrar la config de
+  // WiFi con dos toques.
   if (currentMode == Mode::Settings) {
     if (tapped) {
       if (ty < DisplayManager::STATUS_BAR_HEIGHT) {
         goHome();
-      } else if (settingsScreen.handleTap(tx, ty)) {
-        // Segundo toque confirmado: borrar y volver al portal
-        display.showMessage("Borrando WiFi...");
-        deviceConfig.clearWifi();
-        delay(700);
-        ESP.restart();
+      } else {
+        SettingsAction action = settingsScreen.handleTap(tx, ty);
+        if (action == SettingsAction::ResetWifi) {
+          // Segundo toque confirmado: borrar y volver al portal
+          display.showMessage("Borrando WiFi...");
+          deviceConfig.clearWifi();
+          delay(700);
+          ESP.restart();
+        } else if (action == SettingsAction::Recalibrate) {
+          touch.recalibrate();  // bloquea hasta que toques las 3 cruces
+          renderCurrentMode();  // el wizard piso la pantalla entera
+        }
       }
     }
     settingsScreen.tick(); // vence la confirmación si el usuario se fue
@@ -363,6 +389,10 @@ void loop() {
   if (tapped && currentMode == Mode::Airports && airportScreen.nextButtonRect().contains(tx, ty)) {
     currentAirportIdx = (currentAirportIdx + 1) % AIRPORT_COUNT;
     lastFetch = 0;
+    // Mismo motivo que en enterMode(): el fetch bloquea y sin cartel el boton
+    // parece no haber respondido.
+    const char* waiting = pendingFetchMessage(Mode::Airports);
+    if (waiting) display.showMessage(waiting);
     fetchForCurrentMode();
     renderCurrentMode();
     delay(30);

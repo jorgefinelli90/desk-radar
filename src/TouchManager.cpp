@@ -37,6 +37,7 @@ void TouchManager::runCalibrationWizard() {
   _tft.setTextDatum(MC_DATUM);
   _tft.drawString("Toca cada cruz", _tft.width() / 2, _tft.height() / 2 - 10, 2);
   _tft.drawString("para calibrar el touch", _tft.width() / 2, _tft.height() / 2 + 10, 2);
+  _tft.drawString("Apunta al centro, sin mover el dedo", _tft.width() / 2, _tft.height() / 2 + 30, 1);
   delay(1800);
 
   // Bloquea hasta que el usuario toque las 3 cruces. Guarda resultado en _calData.
@@ -44,21 +45,45 @@ void TouchManager::runCalibrationWizard() {
 }
 
 void TouchManager::begin() {
-  if (!loadCalibration()) {
+  if (FORCE_TOUCH_CALIBRATION) {
+    Serial.println("[Touch] FORCE_TOUCH_CALIBRATION=1: recalibro a proposito");
     runCalibrationWizard();
     saveCalibration();
+  } else if (!loadCalibration()) {
+    // Sin este log no hay forma de saber si el wizard salta una vez (esperado
+    // al cambiar la rotacion) o en cada arranque (algo anda mal con la NVS).
+    Serial.printf("[Touch] Sin calibracion valida para rotacion %u: corro el wizard\n",
+                  SCREEN_ROTATION);
+    runCalibrationWizard();
+    saveCalibration();
+  } else {
+    Serial.printf("[Touch] Calibracion cargada de NVS (rotacion %u)\n", SCREEN_ROTATION);
   }
   _tft.setTouch(_calData);
 }
 
+void TouchManager::recalibrate() {
+  runCalibrationWizard();
+  saveCalibration();
+  _tft.setTouch(_calData);
+
+  // El dedo todavía puede estar apoyado sobre la última cruz: sin esto, al
+  // levantarlo el flanco siguiente entra como un tap y activa lo que haya
+  // debajo en la pantalla que se repinta atrás.
+  _wasTouched = true;
+  _lastTapMs = millis();
+}
+
 bool TouchManager::getTap(uint16_t& x, uint16_t& y) {
   uint16_t rawX = 0, rawY = 0;
-  bool touched = _tft.getTouch(&rawX, &rawY);
+  // Sin el tercer argumento, TFT_eSPI usa un umbral de presion de 600 y hay
+  // que apretar bastante mas fuerte de lo que pidio el wizard. Ver config.h.
+  bool touched = _tft.getTouch(&rawX, &rawY, TOUCH_PRESSURE);
 
   bool isNewTap = false;
   if (touched && !_wasTouched) {
     uint32_t now = millis();
-    if (now - _lastTapMs > DEBOUNCE_MS) {
+    if (now - _lastTapMs > TOUCH_DEBOUNCE_MS) {
       x = rawX;
       y = rawY;
       isNewTap = true;

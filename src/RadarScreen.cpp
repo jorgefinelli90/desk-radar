@@ -205,7 +205,6 @@ void RadarScreen::drawPanel(const AircraftState* closest, int shown) {
   }
 
   char countStr[24];
-  snprintf(countStr, sizeof(countStr), "%d en pantalla", shown);
   tft.setTextDatum(TR_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(countStr, tft.width() - 8, 286, 1);

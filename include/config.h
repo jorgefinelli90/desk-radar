@@ -14,6 +14,26 @@
 // qué rotación calibró y vuelve a correr el wizard solo si cambiás este valor.
 static const uint8_t SCREEN_ROTATION = 2;
 
+// --- Sensibilidad del touch ---
+// Presión (valor Z del XPT2046) a partir de la cual TFT_eSPI considera que
+// hay un toque. El default de la librería en getTouch() es 600, pero el wizard
+// de calibración valida los toques con Z_THRESHOLD/2 = 175: calibrás con un
+// toque suave y después, para usarlo, te exige 3 veces más presión. De ahí la
+// sensación de "toco y no pasa nada". 350 es el propio Z_THRESHOLD de la
+// librería y deja pasar el toque normal de un dedo.
+// Si te registra toques fantasma, subilo; si tenés que apretar fuerte, bajalo.
+static const uint16_t TOUCH_PRESSURE = 350;
+
+// Ventana anti-rebote entre toques aceptados. Tiene que cubrir el temblor del
+// dedo al soltar, no la velocidad a la que navegás: con 250 ms un segundo
+// toque intencional (ej. avanzar de aeropuerto) se comía si ibas rápido.
+static const uint32_t TOUCH_DEBOUNCE_MS = 120;
+
+// Poner en 1 para forzar el wizard de calibración en el próximo arranque,
+// sin tener que cambiar SCREEN_ROTATION. Útil si te quedó torcida (tocás un
+// botón y responde el de al lado). Acordate de volverlo a 0 después.
+#define FORCE_TOUCH_CALIBRATION 0
+
 // --- Ubicación de referencia (tu casa) ---
 static const double HOME_LAT = -34.5858006;
 static const double HOME_LON = -58.5917033;
