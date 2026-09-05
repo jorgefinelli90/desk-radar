@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "DisplayManager.h"
+#include "core/DisplayManager.h"
 
 // Banner de mensaje superpuesto a la pantalla que esté activa.
 //

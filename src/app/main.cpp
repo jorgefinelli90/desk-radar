@@ -3,24 +3,24 @@
 #include <vector>
 
 #include "config.h"
-#include "DeviceConfig.h"  // credenciales en NVS (reemplaza a secrets.h)
-#include "WebPortal.h"
-#include "Banner.h"
-#include "SettingsScreen.h"
-#include "GeoUtils.h"
-#include "OpenSkyClient.h"
-#include "DisplayManager.h"
-#include "TouchManager.h"
-#include "HomeScreen.h"
-#include "RadarScreen.h"
-#include "AirportScreen.h"
-#include "MapScreen.h"
-#include "DetailScreen.h"
-#include "InfoMenuScreen.h"
-#include "NewsClient.h"
-#include "NewsScreen.h"
-#include "WeatherClient.h"
-#include "WeatherScreen.h"
+#include "core/DeviceConfig.h"  // credenciales en NVS (reemplaza a secrets.h)
+#include "core/WebPortal.h"
+#include "core/Banner.h"
+#include "screens/SettingsScreen.h"
+#include "utils/GeoUtils.h"
+#include "services/OpenSkyClient.h"
+#include "core/DisplayManager.h"
+#include "core/TouchManager.h"
+#include "screens/HomeScreen.h"
+#include "screens/RadarScreen.h"
+#include "screens/AirportScreen.h"
+#include "screens/MapScreen.h"
+#include "screens/DetailScreen.h"
+#include "screens/InfoMenuScreen.h"
+#include "services/NewsClient.h"
+#include "screens/NewsScreen.h"
+#include "services/WeatherClient.h"
+#include "screens/WeatherScreen.h"
 
 enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, Weather, Settings };
 

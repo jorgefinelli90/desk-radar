@@ -1,4 +1,4 @@
-#include "TouchManager.h"
+#include "core/TouchManager.h"
 #include "config.h"
 #include <Preferences.h>
 

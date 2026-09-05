@@ -36,9 +36,16 @@ namespace GeoUtils {
   // punto dado, para un radio en km. Suficiente para bbox chicos (<~100km).
   struct BBox { double lamin, lamax, lomin, lomax; };
 
+  // Km por grado de latitud, derivados del MISMO radio que usa distanceKm.
+  // Antes esto era un 111.32 fijo, que es el radio ecuatorial (~6378 km) y no
+  // el esferico de 6371 con el que se miden las distancias: el recuadro salia
+  // un 0,11% corto y, sobre 45 km, los aviones de los ultimos ~50 m del borde
+  // podian no llegar nunca. Lo encontro test_el_bbox_cubre_el_radio_pedido.
+  constexpr double KM_PER_DEG_LAT = EARTH_RADIUS_KM * PI / 180.0;
+
   inline BBox boundingBox(double lat, double lon, double radiusKm) {
-    double dLat = radiusKm / 111.32; // 1 grado lat ~ 111.32 km
-    double dLon = radiusKm / (111.32 * cos(toRad(lat)));
+    double dLat = radiusKm / KM_PER_DEG_LAT;
+    double dLon = radiusKm / (KM_PER_DEG_LAT * cos(toRad(lat)));
     BBox box;
     box.lamin = lat - dLat;
     box.lamax = lat + dLat;

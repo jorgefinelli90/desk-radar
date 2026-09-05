@@ -1,9 +1,9 @@
 #pragma once
 #include <vector>
-#include "DisplayManager.h"
-#include "OpenSkyClient.h"
+#include "core/DisplayManager.h"
+#include "services/OpenSkyClient.h"
 #include "config.h"
-#include "UiRect.h"
+#include "models/UiRect.h"
 
 class AirportScreen {
   public:

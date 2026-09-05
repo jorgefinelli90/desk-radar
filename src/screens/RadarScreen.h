@@ -1,10 +1,10 @@
 #pragma once
 #include <vector>
 #include "config.h"
-#include "DisplayManager.h"
-#include "OpenSkyClient.h"
-#include "AircraftBlip.h"
-#include "MapTiles.h"
+#include "core/DisplayManager.h"
+#include "services/OpenSkyClient.h"
+#include "models/AircraftBlip.h"
+#include "services/MapTiles.h"
 #include "MapAssets.h"
 
 class RadarScreen {

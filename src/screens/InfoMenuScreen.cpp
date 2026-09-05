@@ -1,4 +1,4 @@
-#include "InfoMenuScreen.h"
+#include "screens/InfoMenuScreen.h"
 
 void InfoMenuScreen::render() {
   TFT_eSPI& tft = _display.tft();

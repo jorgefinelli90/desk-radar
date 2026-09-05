@@ -1,6 +1,6 @@
 #pragma once
-#include "DisplayManager.h"
-#include "UiRect.h"
+#include "core/DisplayManager.h"
+#include "models/UiRect.h"
 
 enum class InfoChoice { None, News, Weather };
 

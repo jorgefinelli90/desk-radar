@@ -1,4 +1,4 @@
-#include "SettingsScreen.h"
+#include "screens/SettingsScreen.h"
 #include "config.h"
 
 void SettingsScreen::onEnter() {

@@ -1,4 +1,4 @@
-#include "HomeScreen.h"
+#include "screens/HomeScreen.h"
 
 void HomeScreen::render() {
   TFT_eSPI& tft = _display.tft();

@@ -1,6 +1,6 @@
 #pragma once
-#include "DisplayManager.h"
-#include "WeatherClient.h"
+#include "core/DisplayManager.h"
+#include "services/WeatherClient.h"
 
 class WeatherScreen {
   public:

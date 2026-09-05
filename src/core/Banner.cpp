@@ -1,5 +1,5 @@
-#include "Banner.h"
-#include "TextUtils.h"
+#include "core/Banner.h"
+#include "utils/TextUtils.h"
 #include "config.h"
 
 void Banner::show(const String& text) {

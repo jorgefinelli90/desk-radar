@@ -1,6 +1,6 @@
-#include "RadarScreen.h"
+#include "screens/RadarScreen.h"
 #include "config.h"
-#include "GeoUtils.h"
+#include "utils/GeoUtils.h"
 #include <math.h>
 #include <string.h>
 #include <algorithm>
@@ -19,6 +19,28 @@ void formatTrafficCountLabel(int shown, char* out, size_t outSize) {
 // Mejor que directamente no compile.
 static_assert((int)RADAR_RANGE_KM == RADAR_MAP_RANGE_KM,
               "RADAR_RANGE_KM (config.h) no coincide con el mapa generado. "
+              "Corre tools/build-map.mjs despues de cambiarlo.");
+
+// Lo mismo con el CENTRO, que era el ultimo dato del pipeline que se podia
+// desincronizar en silencio: los .bin son un recorte alrededor de un punto fijo,
+// asi que si alguien mueve la casa en config.h y no regenera, GeoMap sigue
+// proyectando contra el origen viejo y los aviones caen sobre calles que no son.
+// El firmware compilaba igual y no habia forma de notarlo mirando la pantalla.
+//
+// La tolerancia es medio pixel del mapa mas fino (el del radar: 200 px para
+// 40 km de ancho, o sea ~200 m por pixel), asi un reajuste de decimales que no
+// mueve nada visible no rompe el build, pero cambiar de barrio si. Se compara
+// con dos restas en vez de fabs() porque fabs no es constexpr.
+static constexpr double MAP_CENTER_TOLERANCE_DEG = 0.0005; // ~55 m en latitud
+
+static_assert(HOME_LAT - MAP_ORIGIN_LAT <  MAP_CENTER_TOLERANCE_DEG &&
+              HOME_LAT - MAP_ORIGIN_LAT > -MAP_CENTER_TOLERANCE_DEG,
+              "HOME_LAT (config.h) no coincide con el centro del mapa generado. "
+              "Corre tools/build-map.mjs despues de cambiarlo.");
+
+static_assert(HOME_LON - MAP_ORIGIN_LON <  MAP_CENTER_TOLERANCE_DEG &&
+              HOME_LON - MAP_ORIGIN_LON > -MAP_CENTER_TOLERANCE_DEG,
+              "HOME_LON (config.h) no coincide con el centro del mapa generado. "
               "Corre tools/build-map.mjs despues de cambiarlo.");
 
 // Paleta de 16 colores del disco (sprite a 4 bpp; a esa profundidad el "color"

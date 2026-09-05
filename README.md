@@ -249,12 +249,39 @@ src/
 |   |-- GeoMap.h                  # proyeccion geografica
 |   |-- GeoUtils.h                # calculos geograficos
 |   `-- TextUtils.h               # texto y ajuste por ancho
-|-- MapAssets.h                   # generado por tools/build-map.mjs
-`-- *.h                           # wrappers temporales de compatibilidad
+`-- MapAssets.h                   # generado por tools/build-map.mjs
 ```
 
-Los headers en la raiz de `src/` son wrappers de compatibilidad para conservar
-los includes existentes mientras el codigo migra a las rutas modulares.
+Todos los `#include` internos usan la ruta modular completa
+(`#include "core/DisplayManager.h"`), que resuelve porque `src/` está en el
+include path (`-I src` en `platformio.ini`). La raíz de `src/` ya no tiene
+headers-puente: el único archivo suelto es `MapAssets.h`, que es generado.
+
+### Tests
+
+```
+test/
+|-- test_geo/                     # GeoUtils (haversine, rumbo, bbox) y GeoMap
+`-- test_text/                    # TextUtils (UTF-8 a ASCII, recorte y wrap)
+```
+
+Se corren **sobre la placa**, con el cable puesto:
+
+```bash
+pio test -e esp32dev              # las dos suites
+pio test -e esp32dev -f test_geo  # solo una
+```
+
+Son las tres unidades que no tienen nada de hardware y donde un error no se ve
+en la pantalla: un avión dibujado 3 km corrido no tira ninguna excepción, sólo
+aparece sobre la calle equivocada. Cubren los valores de referencia externos
+(un grado de latitud, antípodas), las distancias y rumbos reales a los tres
+aeropuertos, y la coherencia entre la proyección del firmware y el mapa
+generado: `test_la_casa_cae_en_el_centro_de_cada_mapa` falla si `MapAssets.h`
+y los `.bin` dejaron de ser del mismo lugar.
+
+Al terminar, la placa queda con el firmware de test: volvé a subir el real con
+`pio run -t upload`.
 
 ## Estructura anterior (referencia)
 
@@ -300,10 +327,9 @@ flight-radar-esp32/
 └── README.md
 ```
 
-La implementaciÃ³n ya estÃ¡ organizada por mÃ³dulos dentro de `src/`:
-`app/`, `core/`, `models/`, `screens/`, `services/` y `utils/`. La raÃ­z de
-`src/` conserva wrappers de compatibilidad con los nombres viejos para no
-romper los `#include` existentes.
+La implementación ya está organizada por módulos dentro de `src/`:
+`app/`, `core/`, `models/`, `screens/`, `services/` y `utils/`, y los `#include`
+apuntan directo a esas rutas.
 
 ## Mapa pre-renderizado
 

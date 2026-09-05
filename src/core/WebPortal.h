@@ -2,8 +2,8 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include <DNSServer.h>
-#include "DeviceConfig.h"
-#include "DisplayManager.h"
+#include "core/DeviceConfig.h"
+#include "core/DisplayManager.h"
 
 // Portal de configuración y dashboard local.
 //

@@ -1,4 +1,4 @@
-#include "DetailScreen.h"
+#include "screens/DetailScreen.h"
 #include "config.h"
 
 const char* DetailScreen::cardinal(double deg) {

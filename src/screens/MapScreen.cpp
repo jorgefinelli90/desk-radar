@@ -1,5 +1,5 @@
-#include "MapScreen.h"
-#include "GeoMap.h"
+#include "screens/MapScreen.h"
+#include "utils/GeoMap.h"
 #include "config.h"
 #include <math.h>
 #include <algorithm>

@@ -1,4 +1,4 @@
-#include "DeviceConfig.h"
+#include "core/DeviceConfig.h"
 #include <Preferences.h>
 
 // secrets.h es opcional: está en .gitignore, así que en un clon limpio no

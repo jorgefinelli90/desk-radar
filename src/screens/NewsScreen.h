@@ -1,6 +1,6 @@
 #pragma once
-#include "DisplayManager.h"
-#include "NewsClient.h"
+#include "core/DisplayManager.h"
+#include "services/NewsClient.h"
 
 class NewsScreen {
   public:

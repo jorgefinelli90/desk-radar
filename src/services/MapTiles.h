@@ -1,9 +1,9 @@
 #pragma once
 #include <Arduino.h>
 #include <FS.h>
-#include "DisplayManager.h"
+#include "core/DisplayManager.h"
 #include "MapAssets.h"
-#include "UiRect.h"
+#include "models/UiRect.h"
 
 // Lector del mapa raster pre-renderizado.
 //

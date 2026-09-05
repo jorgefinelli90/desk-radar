@@ -14,6 +14,13 @@
 //  Mapa (c) Esri, HERE, Garmin, (c) OpenStreetMap contributors.
 // ===========================================================================
 
+// Centro con el que se genero este mapa, leido de include/config.h. Tiene que
+// seguir coincidiendo con HOME_LAT/HOME_LON: RadarScreen.cpp lo verifica con un
+// static_assert. Sin esto, mover la casa en config.h y no volver a correr el
+// generador compilaba igual y dejaba los aviones sobre calles que no son.
+static constexpr double MAP_ORIGIN_LAT = -34.5858006;
+static constexpr double MAP_ORIGIN_LON = -58.5917033;
+
 // Tamano del viewport del mapa en pantalla, en pixeles.
 static const int MAP_VIEW_W = 240;
 static const int MAP_VIEW_H = 262;

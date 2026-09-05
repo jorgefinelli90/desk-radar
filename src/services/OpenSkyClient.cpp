@@ -1,6 +1,6 @@
-#include "OpenSkyClient.h"
+#include "services/OpenSkyClient.h"
 #include "config.h"
-#include "DeviceConfig.h"
+#include "core/DeviceConfig.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>

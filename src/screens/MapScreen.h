@@ -1,11 +1,11 @@
 #pragma once
 #include <vector>
-#include "DisplayManager.h"
-#include "OpenSkyClient.h"
-#include "AircraftBlip.h"
-#include "MapTiles.h"
+#include "core/DisplayManager.h"
+#include "services/OpenSkyClient.h"
+#include "models/AircraftBlip.h"
+#include "services/MapTiles.h"
 #include "MapAssets.h"
-#include "UiRect.h"
+#include "models/UiRect.h"
 
 // Mapa realista del área de casa. El fondo es una imagen raster pre-renderizada
 // (ver tools/build-map.mjs) que vive en LittleFS; encima se dibujan los aviones

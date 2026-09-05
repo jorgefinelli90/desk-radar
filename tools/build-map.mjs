@@ -22,7 +22,7 @@
 //  (c) OpenStreetMap contributors y la comunidad GIS).
 // ---------------------------------------------------------------------------
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
@@ -31,8 +31,30 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 
 // --- Parametros (tienen que coincidir con include/config.h) -----------------
-const HOME_LAT = -34.5858006;
-const HOME_LON = -58.5917033;
+// El centro NO se escribe aca: se lee de include/config.h, que es la fuente de
+// verdad del firmware. Tenerlo duplicado era el modo de falla mas silencioso que
+// quedaba en el pipeline: cambiabas la casa en config.h, no regenerabas el mapa,
+// y el firmware seguia proyectando sobre el recorte viejo sin que nada se
+// quejara. Ahora ademas el header generado lleva el centro y RadarScreen.cpp lo
+// verifica con un static_assert, asi que las dos mitades no se pueden separar.
+let HOME_LAT;
+let HOME_LON;
+
+async function readHomeFromConfig() {
+  const path = join(ROOT, 'include', 'config.h');
+  const src = await readFile(path, 'utf8');
+  const grab = (name) => {
+    // String.raw y no un template comun: en un template literal `\s` se come la
+    // barra y el regex queda buscando la letra "s".
+    const re = new RegExp(
+      String.raw`static\s+(?:constexpr|const)\s+double\s+` +
+      name + String.raw`\s*=\s*(-?[0-9.]+)`);
+    const m = src.match(re);
+    if (!m) throw new Error(`no encontre ${name} en include/config.h`);
+    return parseFloat(m[1]);
+  };
+  return { lat: grab('HOME_LAT'), lon: grab('HOME_LON') };
+}
 
 // Viewport del mapa en la pantalla del ESP32 (240x320 menos barra de estado,
 // leyenda de altitud y boton de zoom). Si cambias esto, cambia MAP_VIEW_* en
@@ -410,6 +432,13 @@ function renderHeader(results, radar) {
 //  Mapa (c) Esri, HERE, Garmin, (c) OpenStreetMap contributors.
 // ===========================================================================
 
+// Centro con el que se genero este mapa, leido de include/config.h. Tiene que
+// seguir coincidiendo con HOME_LAT/HOME_LON: RadarScreen.cpp lo verifica con un
+// static_assert. Sin esto, mover la casa en config.h y no volver a correr el
+// generador compilaba igual y dejaba los aviones sobre calles que no son.
+static constexpr double MAP_ORIGIN_LAT = ${HOME_LAT};
+static constexpr double MAP_ORIGIN_LON = ${HOME_LON};
+
 // Tamano del viewport del mapa en pantalla, en pixeles.
 static const int MAP_VIEW_W = ${VIEW_W};
 static const int MAP_VIEW_H = ${VIEW_H};
@@ -471,7 +500,11 @@ ${radar.levels
 // --- Main ------------------------------------------------------------------
 async function main() {
   console.log('Generando el mapa de desk-radar');
-  console.log(`  centro: ${HOME_LAT}, ${HOME_LON}`);
+
+  const home = await readHomeFromConfig();
+  HOME_LAT = home.lat;
+  HOME_LON = home.lon;
+  console.log(`  centro: ${HOME_LAT}, ${HOME_LON}  (leido de include/config.h)`);
   console.log(`  viewport: ${VIEW_W}x${VIEW_H} px`);
 
   await mkdir(join(ROOT, 'data'), { recursive: true });

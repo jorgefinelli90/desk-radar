@@ -1,7 +1,7 @@
-#include "NewsClient.h"
+#include "services/NewsClient.h"
 #include "config.h"
-#include "TextUtils.h"
-#include "DeviceConfig.h"
+#include "utils/TextUtils.h"
+#include "core/DeviceConfig.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>

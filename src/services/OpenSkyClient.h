@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <vector>
-#include "GeoUtils.h"
+#include "utils/GeoUtils.h"
 
 struct AircraftState {
   String  icao24;

@@ -1,6 +1,6 @@
 #pragma once
-#include "DisplayManager.h"
-#include "UiRect.h"
+#include "core/DisplayManager.h"
+#include "models/UiRect.h"
 
 // Qué pidió el usuario en la pantalla de ajustes.
 enum class SettingsAction {

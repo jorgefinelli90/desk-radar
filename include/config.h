@@ -35,8 +35,13 @@ static const uint32_t TOUCH_DEBOUNCE_MS = 120;
 #define FORCE_TOUCH_CALIBRATION 0
 
 // --- Ubicación de referencia (tu casa) ---
-static const double HOME_LAT = -34.5858006;
-static const double HOME_LON = -58.5917033;
+// constexpr y no const, por el mismo motivo que RADAR_RANGE_KM: RadarScreen.cpp
+// los compara contra el centro del mapa generado en un static_assert, y para eso
+// tienen que ser expresión constante. tools/build-map.mjs LEE estos dos valores
+// de acá, así que este archivo es la única fuente de verdad de dónde está la
+// casa: si los cambiás, volvé a correr el generador.
+static constexpr double HOME_LAT = -34.5858006;
+static constexpr double HOME_LON = -58.5917033;
 
 // --- Radar: alcance y refresco adaptativo ---
 // constexpr y no const: RadarScreen.cpp lo compara con el alcance del mapa

@@ -1,5 +1,5 @@
-#include "WeatherScreen.h"
-#include "TextUtils.h"
+#include "screens/WeatherScreen.h"
+#include "utils/TextUtils.h"
 #include "config.h"
 #include <math.h>
 

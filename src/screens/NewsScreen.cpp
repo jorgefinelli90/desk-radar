@@ -1,5 +1,5 @@
-#include "NewsScreen.h"
-#include "TextUtils.h"
+#include "screens/NewsScreen.h"
+#include "utils/TextUtils.h"
 
 void NewsScreen::render(const NewsClient& news) {
   TFT_eSPI& tft = _display.tft();

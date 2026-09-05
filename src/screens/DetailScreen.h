@@ -1,6 +1,6 @@
 #pragma once
-#include "DisplayManager.h"
-#include "OpenSkyClient.h"
+#include "core/DisplayManager.h"
+#include "services/OpenSkyClient.h"
 
 class DetailScreen {
   public:
