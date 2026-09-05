@@ -47,6 +47,12 @@ class WebPortal {
     // dashboard.
     void noteFetchOk() { _lastFetchOkMs = millis(); }
 
+    // Antiguedad del ultimo fetch bueno. El dato vive aca porque el dashboard
+    // ya lo mostraba; desde UX-4 la barra de estado de la pantalla lo muestra
+    // tambien, en vez del viejo indicador RAPIDO/NORMAL.
+    bool     hasFetchOk() const { return _lastFetchOkMs != 0; }
+    uint32_t fetchAgeMs() const { return millis() - _lastFetchOkMs; }
+
     const String& hostname() const { return _hostname; }
 
   private:

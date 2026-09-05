@@ -248,7 +248,8 @@ void RadarScreen::drawPanel(const AircraftState* closest, int shown) {
 //  render(): se llama cuando llegan datos nuevos (cada 30s o 5s). Recalcula
 //  los blips y repinta lo que no es el disco. El disco lo pinta drawFrame().
 // ---------------------------------------------------------------------------
-void RadarScreen::render(std::vector<AircraftState>& aircraft, bool fastMode) {
+void RadarScreen::render(std::vector<AircraftState>& aircraft,
+                         const String& status, uint16_t statusColor) {
   ensureDisc();
 
   if (!_chromeValid) {
@@ -256,7 +257,7 @@ void RadarScreen::render(std::vector<AircraftState>& aircraft, bool fastMode) {
     _chromeValid = true;
   }
 
-  _display.showStatusBar("< HOME  RADAR", fastMode ? "RAPIDO" : "NORMAL", fastMode);
+  _display.showStatusBar("< HOME  RADAR", status, statusColor);
 
   // Ordenar por distancia: el primero en rango es el que va al panel inferior
   std::sort(aircraft.begin(), aircraft.end(),

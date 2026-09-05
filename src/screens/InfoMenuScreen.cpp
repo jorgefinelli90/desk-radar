@@ -4,7 +4,7 @@ void InfoMenuScreen::render() {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
-  _display.showStatusBar("< HOME  MAS INFO", "", false);
+  _display.showStatusBar("< HOME  MAS INFO", "");
 
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);

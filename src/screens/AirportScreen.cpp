@@ -3,12 +3,12 @@
 
 void AirportScreen::render(const AirportDef& airport,
                             std::vector<AircraftState>& aircraft,
-                            bool fastMode) {
+                            const String& status, uint16_t statusColor) {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
   String leftLabel = String("< HOME  ") + airport.name;
-  _display.showStatusBar(leftLabel, fastMode ? "RAPIDO" : "NORMAL", fastMode);
+  _display.showStatusBar(leftLabel, status, statusColor);
 
   // Reservamos una franja abajo para el botón "Siguiente >"
   const int btnH = 34;

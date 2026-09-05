@@ -5,6 +5,7 @@
 #include "config.h"
 #include "core/DeviceConfig.h"  // credenciales en NVS (reemplaza a secrets.h)
 #include "core/WebPortal.h"
+#include "core/Clock.h"
 #include "core/Banner.h"
 #include "screens/SettingsScreen.h"
 #include "utils/GeoUtils.h"
@@ -25,6 +26,7 @@
 enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, Weather, Settings };
 
 DisplayManager display;
+Clock          deviceClock;   // NTP; la barra de estado lo consulta via display
 TouchManager   touch(display.tft());
 OpenSkyClient  opensky;      // credenciales desde NVS, ya no del compilador
 NewsClient     newsClient;   // idem
@@ -105,6 +107,9 @@ void wifiTick() {
     wifiEventGotIp = false;
     Serial.printf("[WiFi] Conectado a %s, IP %s\n",
                   WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+    // Recien ahora tiene sentido pedir la hora. Es idempotente, asi que no pasa
+    // nada si la red se cae y vuelve varias veces.
+    deviceClock.begin();
     // El dashboard se levanta acá y no en setup(): si al arrancar no había red,
     // antes no se levantaba nunca, aunque la red volviera un minuto después.
     if (!webPortal.dashboardUp()) webPortal.startDashboard();
@@ -164,13 +169,51 @@ void fetchForCurrentMode() {
   lastFetch = millis();
 }
 
+// --- Frescura de los datos de OpenSky ---------------------------------------
+// "5s", "45s", "2m", "1h".
+static String formatAge(uint32_t ms) {
+  uint32_t s = ms / 1000;
+  char buf[8];
+  if (s < 60)        snprintf(buf, sizeof(buf), "%us", (unsigned)s);
+  else if (s < 3600) snprintf(buf, sizeof(buf), "%um", (unsigned)(s / 60));
+  else               snprintf(buf, sizeof(buf), "%uh", (unsigned)(s / 3600));
+  return String(buf);
+}
+
+// Lo que va a la derecha de la barra de estado, en lugar del viejo indicador
+// RAPIDO/NORMAL. Saber que el radar sigue barriendo sobre datos de hace tres
+// minutos importa mas que saber cada cuanto piensa refrescar: el barrido gira
+// igual aunque no llegue nada, asi que sin esto una API caida se ve exactamente
+// igual que todo funcionando. El modo rapido no se perdio, ahora lo dice el
+// color.
+static String dataStatusText() {
+  if (!webPortal.hasFetchOk()) return String("sin datos");
+  return String("hace ") + formatAge(webPortal.fetchAgeMs());
+}
+
+// Version corta para el Mapa, que ademas muestra el conteo de aviones y no
+// tiene lugar para el "hace".
+static String dataAgeShort() {
+  if (!webPortal.hasFetchOk()) return String("--");
+  return formatAge(webPortal.fetchAgeMs());
+}
+
+// Verde: refrescando rapido porque hay trafico cerca. Ambar: el ultimo fetch
+// bueno quedo viejo (la API dejo de responder, o no hay red) y lo que se ve en
+// pantalla ya no es de ahora. Plata: al dia, a ritmo normal.
+static uint16_t dataStatusColor() {
+  if (!webPortal.hasFetchOk())                 return TFT_ORANGE;
+  if (webPortal.fetchAgeMs() >= STALE_DATA_MS) return TFT_ORANGE;
+  return fastMode ? TFT_GREEN : TFT_SILVER;
+}
+
 void renderCurrentMode() {
   if (currentMode == Mode::Home) {
     homeScreen.render();
   } else if (currentMode == Mode::Radar) {
-    radarScreen.render(aircraft, fastMode);
+    radarScreen.render(aircraft, dataStatusText(), dataStatusColor());
   } else if (currentMode == Mode::Map) {
-    mapScreen.render(aircraft);
+    mapScreen.render(aircraft, dataAgeShort(), dataStatusColor());
   } else if (currentMode == Mode::Detail) {
     detailScreen.render(selectedAircraft);
   } else if (currentMode == Mode::InfoMenu) {
@@ -183,7 +226,8 @@ void renderCurrentMode() {
     settingsScreen.render(WiFi.SSID(), WiFi.localIP().toString(),
                           webPortal.hostname());
   } else {
-    airportScreen.render(AIRPORTS[currentAirportIdx], aircraft, fastMode);
+    airportScreen.render(AIRPORTS[currentAirportIdx], aircraft,
+                         dataStatusText(), dataStatusColor());
   }
 }
 
@@ -222,6 +266,15 @@ void enterMode(Mode m) {
   const bool reusesData = sharesAircraftData(previous, m);
   if (!reusesData) {
     lastFetch = 0; // fuerza un fetch inmediato al entrar
+
+    // Los aviones que tenemos en RAM son de otra zona (o de otra pantalla):
+    // dibujarlos aca seria mentir, sobre todo en Aeropuertos, donde la lista no
+    // filtra por area y quedarian los de casa como si estuvieran en Ezeiza.
+    //
+    // Esto NO es el out.clear() que causaba el bug de OpenSkyClient: alla la
+    // lista se vaciaba por un error de red, aca se descarta porque cambio el
+    // area que estamos mirando, que es un motivo legitimo.
+    aircraft.clear();
   }
 
   if (m == Mode::Radar)         radarScreen.onEnter(); // limpia y reinicia el barrido
@@ -242,6 +295,7 @@ void enterMode(Mode m) {
 void setup() {
   Serial.begin(115200);
   display.begin();
+  display.setClock(&deviceClock); // la barra de estado muestra la hora
   touch.begin();      // corre el wizard de calibración la primera vez
   deviceConfig.begin(); // credenciales desde NVS
   mapTiles.begin();   // monta LittleFS con los mapas pre-renderizados
@@ -311,6 +365,11 @@ void loop() {
     else if (currentMode == Mode::Map) mapScreen.onEnter();
     renderCurrentMode();
   }
+
+  // Reloj de la barra: repinta solo cuando cambia el minuto, asi que sale casi
+  // siempre por el primer if. Va despues del banner (que tapa la barra) y no se
+  // llama en Home, que es la unica pantalla sin barra de estado.
+  if (currentMode != Mode::Home) display.tickStatusClock();
 
   uint16_t tx = 0, ty = 0;
   bool tapped = touch.getTap(tx, ty);

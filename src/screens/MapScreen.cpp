@@ -167,7 +167,8 @@ void MapScreen::drawNoMapNotice(TFT_eSPI& tft) {
   tft.drawString("corre: pio run -t uploadfs", 6, MAP_TOP + 12, 1);
 }
 
-void MapScreen::render(std::vector<AircraftState>& aircraft) {
+void MapScreen::render(std::vector<AircraftState>& aircraft,
+                       const String& ageText, uint16_t statusColor) {
   TFT_eSPI& tft = _display.tft();
   const MapAsset& asset = MAP_ASSETS[_assetIdx];
 
@@ -272,8 +273,8 @@ void MapScreen::render(std::vector<AircraftState>& aircraft) {
   }
 
   char right[20];
-  snprintf(right, sizeof(right), "%d aviones", shown);
-  _display.showStatusBar("< HOME  MAPA", right, false);
+  snprintf(right, sizeof(right), "%d av  %s", shown, ageText.c_str());
+  _display.showStatusBar("< HOME  MAPA", right, statusColor);
 }
 
 const AircraftState* MapScreen::hitTest(uint16_t x, uint16_t y) const {

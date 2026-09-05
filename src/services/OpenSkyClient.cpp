@@ -80,9 +80,14 @@ bool OpenSkyClient::requestNewToken() {
   return _accessToken.length() > 0;
 }
 
+// OJO con el manejo de errores de aca: `out` NO se toca hasta que la respuesta
+// entera esta parseada y es buena. Antes esta funcion arrancaba con un
+// out.clear() y recien despues pedia el token y hacia el GET, asi que cualquier
+// 429, 503 o corte de TLS -que con OpenSky pasa seguido- devolvia false con la
+// lista ya vaciada: el radar se quedaba pelado 30 segundos por un error de red
+// que habia durado un instante. Ahora se llena un vector aparte y se cambia por
+// el del llamador de una sola vez, al final del todo.
 bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftState>& out) {
-  out.clear();
-
   if (!ensureToken()) {
     return false;
   }
@@ -134,10 +139,19 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
     return false;
   }
 
+  // A partir de aca la respuesta ya es buena, asi que lo que salga reemplaza a
+  // lo que habia. states nulo significa que la zona esta vacia de verdad, y eso
+  // tambien es un dato: el swap de abajo deja `out` vacio, que es lo correcto.
+  // Lo que no puede pasar es vaciarla por un error de red.
+  std::vector<AircraftState> frescos;
+
   JsonArray states = doc["states"].as<JsonArray>();
   if (states.isNull()) {
+    out.swap(frescos);
     return true; // sin tráfico en la zona, no es un error
   }
+
+  frescos.reserve(states.size());
 
   for (JsonArray s : states) {
     AircraftState a;
@@ -153,8 +167,9 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
 
     if (a.lat == 0.0 && a.lon == 0.0) continue; // sin posición válida
 
-    out.push_back(a);
+    frescos.push_back(a);
   }
 
+  out.swap(frescos);
   return true;
 }

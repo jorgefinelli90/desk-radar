@@ -18,7 +18,8 @@ class RadarScreen {
 
     // Dibuja el radar completo con la lista de aviones ya calculada
     // (distanceKm y bearingDeg deben estar llenos).
-    void render(std::vector<AircraftState>& aircraft, bool fastMode);
+    void render(std::vector<AircraftState>& aircraft,
+                const String& status, uint16_t statusColor);
 
     // Avanza la animación del barrido. Se llama en cada vuelta del loop y
     // devuelve enseguida si todavía no toca dibujar un frame nuevo, así que

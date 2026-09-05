@@ -14,7 +14,7 @@ String NewsClient::localTimeFromIso(const String& iso) {
   int hh = iso.substring(11, 13).toInt();
   int mm = iso.substring(14, 16).toInt();
 
-  hh += NEWS_TZ_OFFSET_H;
+  hh += TZ_OFFSET_H;
   if (hh < 0)   hh += 24;
   if (hh >= 24) hh -= 24;
 

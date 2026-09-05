@@ -210,6 +210,16 @@ a `0`.
   `config.h`). Si una request falla, se reintenta recién al minuto en vez de
   martillar la API. Con eso el free tier de GNews (100 requests/día) alcanza
   de sobra aunque dejes la pantalla puesta todo el día.
+- **Barra de estado**: arriba de todo, en todas las pantallas menos Home. A la
+  izquierda la navegación ("< HOME" y dónde estás), pegado al borde derecho el
+  **reloj** en hora local (aparece cuando NTP sincroniza, unos segundos después
+  de conectar), y en el medio la **antigüedad del último dato bueno de
+  OpenSky**: "hace 5s", "hace 2m". Reemplaza al viejo indicador RAPIDO/NORMAL,
+  que ahora lo dice el color: verde cuando está refrescando rápido por tráfico
+  cerca, plateado en ritmo normal y **ámbar cuando el dato pasó de 90 segundos**.
+  Eso último importa en el Radar: el barrido gira igual aunque no llegue nada,
+  así que sin este aviso una API caída se ve exactamente igual que todo
+  funcionando.
 - **Volver a Home**: en cualquier pantalla, tocá la franja superior (donde
   dice "< HOME") para volver al menú principal.
 
@@ -511,8 +521,15 @@ Devuelve además la condición como
 [código WMO](https://open-meteo.com/en/docs) (0 = despejado, 3 = nublado,
 61-65 = lluvia, 95-99 = tormenta, etc.), que es lo que
 `WeatherClient::describe()` traduce a ícono + texto en español. Con
-`timezone=auto` la hora de la medición ya viene en horario local, así que la
-pantalla la muestra sin necesidad de NTP ni RTC.
+`timezone=auto` la hora de la medición ya viene en horario local, así que esa
+pantalla no depende del reloj del dispositivo.
+
+El reloj de la barra de estado sí usa NTP (`src/core/Clock.h`): se sincroniza
+solo cuando aparece la IP y no bloquea nada, porque el cliente SNTP del core
+corre en segundo plano. Mientras no haya hora creíble, simplemente no se dibuja
+—mostrar "00:00" sería peor que no mostrar nada—. Argentina es UTC-3 todo el
+año, así que alcanza con `TZ_OFFSET_H` y no hace falta arrastrar la base de
+datos de zonas horarias.
 
 ## Notas de implementación
 

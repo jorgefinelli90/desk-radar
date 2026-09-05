@@ -116,8 +116,24 @@ static const uint32_t WEATHER_CACHE_MS = 15UL * 60UL * 1000UL; // 15 min
 // Si una request falla, esperamos esto antes de reintentar (no martillar la API)
 static const uint32_t API_RETRY_MS = 60UL * 1000UL;
 
-// GNews devuelve publishedAt en UTC. Argentina es UTC-3 todo el año.
-static const int NEWS_TZ_OFFSET_H = -3;
+// --- Hora local y NTP ---
+// Argentina es UTC-3 todo el año (no hay horario de verano), así que alcanza un
+// offset fijo y no hace falta arrastrar la base de datos de zonas horarias.
+// Lo usan dos cosas: el reloj de la barra de estado y la conversión de la hora
+// de publicación de los titulares, que GNews devuelve en UTC.
+static const int TZ_OFFSET_H = -3;
+
+// Servidores NTP. El segundo es el respaldo por si el pool no resuelve.
+// La sincronización no bloquea: SNTP corre en segundo plano y la hora aparece
+// sola unos segundos después de que haya IP.
+static const char* NTP_SERVER_1 = "pool.ntp.org";
+static const char* NTP_SERVER_2 = "time.google.com";
+
+// A partir de acá los datos de OpenSky se consideran viejos y la barra de
+// estado lo avisa en ámbar. Tiene que ser bastante mayor que REFRESH_NORMAL_MS
+// (30 s) para no encenderse en cada ciclo normal, pero lo bastante corto como
+// para notarse si la API dejó de responder.
+static const uint32_t STALE_DATA_MS = 90UL * 1000UL;
 
 // --- Animación del barrido del radar ---
 // El barrido gira solo, independiente del ciclo de fetch de OpenSky: usa la

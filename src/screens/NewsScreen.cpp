@@ -5,7 +5,7 @@ void NewsScreen::render(const NewsClient& news) {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
-  _display.showStatusBar("< HOME  NOTICIAS", "GNews", false);
+  _display.showStatusBar("< HOME  NOTICIAS", "GNews");
 
   if (!news.hasData()) {
     tft.setTextDatum(MC_DATUM);

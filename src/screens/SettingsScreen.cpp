@@ -10,7 +10,7 @@ void SettingsScreen::render(const String& ssid, const String& ip,
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
-  _display.showStatusBar("< HOME  AJUSTES", "", false);
+  _display.showStatusBar("< HOME  AJUSTES", "");
 
   int y = 30;
   auto row = [&](const char* label, const String& value, uint16_t color) {

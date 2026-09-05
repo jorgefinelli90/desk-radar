@@ -11,7 +11,7 @@ class AirportScreen {
 
     void render(const AirportDef& airport,
                 std::vector<AircraftState>& aircraft,
-                bool fastMode);
+                const String& status, uint16_t statusColor);
 
     // Rectángulo del botón "Siguiente >" dibujado en el último render()
     const UiRect& nextButtonRect() const { return _nextBtn; }

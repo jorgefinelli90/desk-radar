@@ -125,7 +125,7 @@ void WeatherScreen::render(const WeatherClient& weather) {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
-  _display.showStatusBar("< HOME  CLIMA", "Open-Meteo", false);
+  _display.showStatusBar("< HOME  CLIMA", "Open-Meteo");
 
   if (!weather.hasData()) {
     tft.setTextDatum(MC_DATUM);

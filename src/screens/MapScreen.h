@@ -24,7 +24,8 @@ class MapScreen {
     // Llamar al entrar desde otra pantalla: fuerza el redibujo completo.
     void onEnter();
 
-    void render(std::vector<AircraftState>& aircraft);
+    void render(std::vector<AircraftState>& aircraft,
+                const String& ageText, uint16_t statusColor);
 
     // Busca un avión en las coordenadas tocadas. Devuelve nullptr si no hay.
     const AircraftState* hitTest(uint16_t x, uint16_t y) const;
