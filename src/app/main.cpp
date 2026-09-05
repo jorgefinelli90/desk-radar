@@ -55,24 +55,72 @@ std::vector<AircraftState> aircraft;
 uint32_t lastFetch = 0;
 bool fastMode = false;
 
-void connectWiFi() {
-  String ssid = deviceConfig.get("ssid");
-  String pass = deviceConfig.get("pass");
-  if (ssid.length() == 0) return; // sin config no hay a qué conectarse
+// --- WiFi -------------------------------------------------------------------
+// La reconexión la maneja el stack (setAutoReconnect) y el loop NUNCA se queda
+// esperando la red. Antes había un solo connectWiFi() que bloqueaba hasta 20 s
+// y el loop lo llamaba cada vez que se vencía el intervalo de refresco sin
+// conexión: con el router caído, el aparato se congelaba 20 s de cada 30 y en
+// ese rato no corría ni el touch, ni el barrido del radar, ni el servidor web.
+bool wifiOnline = false;          // último estado que ya reportamos por serie
+uint32_t lastWifiTryMs = 0;
 
-  display.showMessage("Conectando a " + ssid + "...");
+// Lo setea el evento y lo consume wifiTick(). volatile porque lo escriben dos
+// tareas distintas.
+volatile bool wifiEventGotIp = false;
+
+// OJO: esto corre en la tarea del event loop de Arduino, NO en el loop
+// principal. Acá solo se toca una bandera: levantar el servidor web o dibujar
+// en la pantalla desde este contexto (otro stack, otra prioridad) es pedir
+// problemas. De eso se encarga wifiTick(), que sí corre en el loop.
+void onWiFiEvent(WiFiEvent_t event) {
+  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) wifiEventGotIp = true;
+}
+
+// Arranca el intento de conexión y vuelve enseguida. No espera nada.
+void startWiFi() {
+  if (!deviceConfig.hasWifi()) return; // sin config no hay a qué conectarse
+
+  WiFi.persistent(false); // las credenciales ya viven en NVS via DeviceConfig:
+                          // sin esto, cada begin() reescribe flash al pedo
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(DEVICE_HOSTNAME);
-  WiFi.begin(ssid.c_str(), pass.c_str());
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(deviceConfig.get("ssid").c_str(), deviceConfig.get("pass").c_str());
+  lastWifiTryMs = millis();
+}
 
+// Único lugar del firmware que espera la red, y solo se llama desde setup():
+// hasta que no hay datos no hay ninguna pantalla útil que mostrar.
+bool waitForWiFi(uint32_t timeoutMs) {
   uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(300);
+  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+    delay(100);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
+// Se llama en cada vuelta del loop. No bloquea nunca.
+void wifiTick() {
+  if (wifiEventGotIp) {
+    wifiEventGotIp = false;
+    Serial.printf("[WiFi] Conectado a %s, IP %s\n",
+                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+    // El dashboard se levanta acá y no en setup(): si al arrancar no había red,
+    // antes no se levantaba nunca, aunque la red volviera un minuto después.
+    if (!webPortal.dashboardUp()) webPortal.startDashboard();
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    display.showMessage("Sin WiFi. Reintentando...");
+  bool online = (WiFi.status() == WL_CONNECTED);
+  if (wifiOnline && !online) {
+    Serial.println("[WiFi] Se cayo la red. Se reintenta solo, en segundo plano.");
   }
+  wifiOnline = online;
+
+  if (online || !deviceConfig.hasWifi()) return;
+  if (millis() - lastWifiTryMs < WIFI_RETRY_MS) return;
+
+  lastWifiTryMs = millis();
+  WiFi.begin(deviceConfig.get("ssid").c_str(), deviceConfig.get("pass").c_str());
 }
 
 // Calcula distancia y bearing de cada avión respecto al punto de referencia dado
@@ -84,7 +132,13 @@ void enrichWithGeo(std::vector<AircraftState>& list, double refLat, double refLo
 }
 
 void fetchForCurrentMode() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    // Sin red no hay nada que pedir, pero el intento se marca igual: si no, el
+    // loop volvería a entrar acá en cada vuelta y repintaría la pantalla entera
+    // cada 30 ms hasta que volviera el WiFi.
+    lastFetch = millis();
+    return;
+  }
 
   if (currentMode == Mode::Radar || currentMode == Mode::Map) {
     // Mismo recuadro para las dos: miran la misma zona (ver HOME_FETCH_RADIUS_KM)
@@ -202,22 +256,33 @@ void setup() {
     webPortal.runSetupPortal();
   }
 
-  connectWiFi();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    webPortal.startDashboard();
-  } else {
-    // Nos quedamos en modo cliente igual: la red puede volver sola y el loop
-    // reintenta. Entrar al portal por un corte de WiFi sería peor: perderíamos
-    // la configuración buena por un problema temporal.
-    Serial.println("[Setup] No conecto ahora. Reintenta solo; para reconfigurar,"
-                   " usa AJUSTES en la pantalla.");
+  WiFi.onEvent(onWiFiEvent);
+  if (deviceConfig.hasWifi()) {
+    display.showMessage("Conectando a " + deviceConfig.get("ssid") + "...");
+    startWiFi();
+    if (!waitForWiFi(WIFI_CONNECT_TIMEOUT_MS)) {
+      // Nos quedamos en modo cliente igual: la red puede volver sola y
+      // wifiTick() reintenta en segundo plano. Entrar al portal por un corte de
+      // WiFi sería peor: perderíamos la configuración buena por un problema
+      // temporal.
+      display.showMessage("Sin WiFi. Reintentando...");
+      Serial.println("[Setup] No conecto ahora. Reintenta solo; para reconfigurar,"
+                     " usa AJUSTES en la pantalla.");
+    }
   }
+  // El dashboard NO se levanta acá: lo hace wifiTick() en cuanto aparece la IP,
+  // sea ahora o dentro de un rato. Así el portal también aparece si la red se
+  // hizo esperar más que WIFI_CONNECT_TIMEOUT_MS.
 
   renderCurrentMode(); // Home
 }
 
 void loop() {
+  // Estado de la red: reconecta si hace falta y levanta el dashboard la primera
+  // vez que hay IP. Va antes de todos los "return" de abajo para que siga
+  // corriendo aunque el banner esté activo o estemos en una pantalla sin red.
+  wifiTick();
+
   // Servidor web. handleClient() es una máquina de estados: si no hay cliente
   // vuelve enseguida, así que no le roba latencia al touch.
   webPortal.tick();
@@ -342,20 +407,13 @@ void loop() {
   if (currentMode == Mode::News || currentMode == Mode::Weather) {
     bool shouldFetch = (currentMode == Mode::News) ? newsClient.shouldRefresh()
                                                    : weatherClient.shouldRefresh();
-    if (shouldFetch) {
-      if (WiFi.status() != WL_CONNECTED) {
-        // connectWiFi() bloquea hasta 20s: sin este throttle, con el WiFi
-        // caido el loop reintentaria en cada vuelta y la pantalla quedaria
-        // congelada. fetchForCurrentMode() no actualiza lastFetch si no hay
-        // red, asi que lo movemos nosotros.
-        if (millis() - lastFetch >= API_RETRY_MS) {
-          lastFetch = millis();
-          connectWiFi();
-        }
-      } else {
-        fetchForCurrentMode();
-        renderCurrentMode();
-      }
+    // Sin red no se intenta nada acá: wifiTick() ya reconecta en segundo plano
+    // y cada cliente tiene su propio reintento (API_RETRY_MS). Antes esta rama
+    // necesitaba un throttle a mano para que el connectWiFi() bloqueante no
+    // dejara la pantalla congelada; ahora no bloquea nadie y sobra.
+    if (shouldFetch && WiFi.status() == WL_CONNECTED) {
+      fetchForCurrentMode();
+      renderCurrentMode();
     }
     delay(30);
     return;
@@ -406,9 +464,8 @@ void loop() {
   uint32_t interval = fastMode ? REFRESH_FAST_MS : REFRESH_NORMAL_MS;
 
   if (millis() - lastFetch >= interval) {
-    if (WiFi.status() != WL_CONNECTED) {
-      connectWiFi();
-    }
+    // Sin red, fetchForCurrentMode() vuelve enseguida y reprograma el intento
+    // para dentro de un intervalo. De reconectar se ocupa wifiTick().
     fetchForCurrentMode();
     renderCurrentMode();
   }

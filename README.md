@@ -213,7 +213,50 @@ a `0`.
 - **Volver a Home**: en cualquier pantalla, tocá la franja superior (donde
   dice "< HOME") para volver al menú principal.
 
-## Estructura del proyecto
+## Estructura actual del proyecto
+
+La estructura principal queda separada por responsabilidad:
+
+```
+src/
+|-- app/
+|   `-- main.cpp                 # punto de entrada y ciclo principal
+|-- core/
+|   |-- Banner.{h,cpp}           # mensajes animados
+|   |-- DeviceConfig.{h,cpp}     # configuracion persistente
+|   |-- DisplayManager.{h,cpp}   # TFT y barra de estado
+|   |-- TouchManager.{h,cpp}     # calibracion y eventos tactiles
+|   `-- WebPortal.{h,cpp}        # portal cautivo, dashboard y mDNS
+|-- models/
+|   |-- AircraftBlip.h           # modelo de aeronave
+|   `-- UiRect.h                 # rectangulo para hit-testing
+|-- screens/
+|   |-- AirportScreen.{h,cpp}
+|   |-- DetailScreen.{h,cpp}
+|   |-- HomeScreen.{h,cpp}
+|   |-- InfoMenuScreen.{h,cpp}
+|   |-- MapScreen.{h,cpp}
+|   |-- NewsScreen.{h,cpp}
+|   |-- RadarScreen.{h,cpp}
+|   |-- SettingsScreen.{h,cpp}
+|   `-- WeatherScreen.{h,cpp}
+|-- services/
+|   |-- MapTiles.{h,cpp}          # mapas raster en LittleFS
+|   |-- NewsClient.{h,cpp}        # titulares y cache
+|   |-- OpenSkyClient.{h,cpp}     # vuelos y OAuth2
+|   `-- WeatherClient.{h,cpp}     # clima y cache
+|-- utils/
+|   |-- GeoMap.h                  # proyeccion geografica
+|   |-- GeoUtils.h                # calculos geograficos
+|   `-- TextUtils.h               # texto y ajuste por ancho
+|-- MapAssets.h                   # generado por tools/build-map.mjs
+`-- *.h                           # wrappers temporales de compatibilidad
+```
+
+Los headers en la raiz de `src/` son wrappers de compatibilidad para conservar
+los includes existentes mientras el codigo migra a las rutas modulares.
+
+## Estructura anterior (referencia)
 
 ```
 flight-radar-esp32/
@@ -256,6 +299,11 @@ flight-radar-esp32/
 │   └── verify-map.mjs       # marca puntos conocidos para validar la proyección
 └── README.md
 ```
+
+La implementaciÃ³n ya estÃ¡ organizada por mÃ³dulos dentro de `src/`:
+`app/`, `core/`, `models/`, `screens/`, `services/` y `utils/`. La raÃ­z de
+`src/` conserva wrappers de compatibilidad con los nombres viejos para no
+romper los `#include` existentes.
 
 ## Mapa pre-renderizado
 
@@ -373,7 +421,7 @@ alto visible son ±21,8 km). Es esperable, no un bug.
 
 El mapa está en **Web Mercator**, no en equirectangular: la latitud no se puede
 interpolar linealmente contra el alto de la imagen o los aviones quedan corridos
-en vertical. `src/GeoMap.h` hace la proyección correcta usando las constantes de
+en vertical. `src/utils/GeoMap.h` hace la proyección correcta usando las constantes de
 `src/MapAssets.h`, que **genera el mismo script que arma los `.bin`** — así la
 imagen y la proyección del firmware no se pueden desincronizar.
 
@@ -487,7 +535,7 @@ separado. Todo lo que hacía falta ya está en el core: `DNSServer`, `WebServer`
 
 ### La tabla de campos: agregar una API key es una fila
 
-`CONFIG_FIELDS` en `src/DeviceConfig.cpp` es la única fuente de verdad. De ahí
+`CONFIG_FIELDS` en `src/core/DeviceConfig.cpp` es la única fuente de verdad. De ahí
 salen el formulario del portal cautivo, el de `/config`, el guardado en NVS y la
 detección de "cambió el WiFi, hay que reiniciar":
 

@@ -6,8 +6,16 @@
 #include <ArduinoJson.h>
 
 bool OpenSkyClient::ensureToken() {
-  // Renueva con 60s de margen antes de que expire
-  if (_accessToken.length() > 0 && millis() < _tokenExpiresAt) {
+  // Renueva con 60s de margen antes de que expire.
+  //
+  // Se resta y se mira el signo en vez de comparar directo con "<": millis()
+  // da la vuelta a los 49,7 dias y vuelve a cero, y ahi "millis() <
+  // _tokenExpiresAt" diria que un token ya vencido sigue vigente. Como no se
+  // renovaria nunca mas, el radar dejaria de traer datos hasta que alguien
+  // reinicie la placa. La resta en aritmetica sin signo sigue dando bien
+  // despues del wrap; es el mismo patron que usan los caches de NewsClient y
+  // WeatherClient.
+  if (_accessToken.length() > 0 && (int32_t)(millis() - _tokenExpiresAt) < 0) {
     return true;
   }
   return requestNewToken();
@@ -58,7 +66,15 @@ bool OpenSkyClient::requestNewToken() {
 
   _accessToken = doc["access_token"].as<String>();
   long expiresIn = doc["expires_in"] | 1800; // segundos, default 30 min
-  _tokenExpiresAt = millis() + (uint32_t)((expiresIn - 60) * 1000UL); // margen de 60s
+
+  // Se renueva 60s antes de que venza, pero cuidando que la resta no quede
+  // negativa: si el servidor devolviera un expires_in corto, (expiresIn - 60)
+  // negativo multiplicado por un unsigned da un plazo enorme y el token no se
+  // renovaria nunca (el mismo sintoma que el wrap de millis(), por otra puerta).
+  long validFor = expiresIn - 60;
+  if (validFor < 30) validFor = expiresIn / 2; // expires_in raro o muy corto
+  if (validFor < 1)  validFor = 1;
+  _tokenExpiresAt = millis() + (uint32_t)validFor * 1000UL;
 
   Serial.println("[OpenSky] Token renovado OK");
   return _accessToken.length() > 0;

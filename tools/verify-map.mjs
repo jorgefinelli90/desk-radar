@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 //  Verificador de la proyeccion del mapa
 //
-//  Aplica exactamente la misma formula que src/GeoMap.h sobre puntos conocidos
+//  Aplica exactamente la misma formula que src/utils/GeoMap.h sobre puntos conocidos
 //  (aeropuertos, tu casa, el Obelisco) y los marca sobre los previews. Si los
 //  circulos caen donde corresponde en el mapa, la proyeccion del firmware esta
 //  bien; si estan corridos, hay un bug de proyeccion.
@@ -29,7 +29,7 @@ const LANDMARKS = [
   { name: 'La Plata',   lat: -34.9215,    lon: -57.9545,    color: '#3bd0ff' },
 ];
 
-// --- Misma proyeccion que src/GeoMap.h -------------------------------------
+// --- Misma proyeccion que src/utils/GeoMap.h -------------------------------
 const TILE_SIZE = 256;
 
 function lonToWorldPx(lon, zoom) {

@@ -1,22 +1,3 @@
 #pragma once
-#include <vector>
-#include "DisplayManager.h"
-#include "OpenSkyClient.h"
-#include "config.h"
-#include "UiRect.h"
 
-class AirportScreen {
-  public:
-    explicit AirportScreen(DisplayManager& display) : _display(display) {}
-
-    void render(const AirportDef& airport,
-                std::vector<AircraftState>& aircraft,
-                bool fastMode);
-
-    // Rectángulo del botón "Siguiente >" dibujado en el último render()
-    const UiRect& nextButtonRect() const { return _nextBtn; }
-
-  private:
-    DisplayManager& _display;
-    UiRect _nextBtn;
-};
+#include "screens/AirportScreen.h"

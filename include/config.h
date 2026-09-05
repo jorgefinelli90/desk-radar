@@ -136,6 +136,19 @@ static const uint32_t RADAR_LOOP_DELAY_MS = 5;
 // cuántos fps está yendo. Útil si querés retocar SWEEP_PERIOD_MS / FRAME_MS.
 #define RADAR_DEBUG_TIMING 0
 
+// --- WiFi ---
+// Cuánto espera el arranque a que entre la red antes de seguir igual. Es lo
+// ÚNICO que bloquea esperando WiFi en todo el firmware: durante setup() no hay
+// ninguna pantalla útil para mostrar, así que ahí sí conviene esperar. En el
+// loop no se espera nunca (ver wifiTick() en main.cpp).
+static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
+
+// Cada cuánto se vuelve a empujar un WiFi.begin() mientras la red está caída.
+// setAutoReconnect() ya reintenta solo, pero si el router estuvo apagado un
+// rato largo el driver deja de insistir y hay que darle un empujón. begin() no
+// bloquea: arranca el intento y vuelve enseguida.
+static const uint32_t WIFI_RETRY_MS = 15000;
+
 // --- Configuración por web / portal cautivo ---
 // Si no hay credenciales WiFi en NVS, el ESP32 arranca como Access Point con
 // este nombre y sirve un portal cautivo para configurarlo desde el celular.

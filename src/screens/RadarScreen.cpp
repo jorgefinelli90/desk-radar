@@ -5,6 +5,14 @@
 #include <string.h>
 #include <algorithm>
 
+namespace {
+
+void formatTrafficCountLabel(int shown, char* out, size_t outSize) {
+  snprintf(out, outSize, "%d avion%s", shown, shown == 1 ? "" : "es");
+}
+
+}  // namespace
+
 // El mapa de fondo se genera con el alcance que dice MapAssets.h. Si alguien
 // cambia RADAR_RANGE_KM en config.h y no regenera el mapa, los anillos y el
 // mapa quedan a distinta escala y los aviones caen sobre calles que no son.
@@ -48,8 +56,11 @@ void RadarScreen::buildPalette() {
 // alcance las dos proyecciones difieren menos de un pixel.
 void RadarScreen::computePalomar() {
   const AirportDef* palomar = nullptr;
-  for (int i = 0; i < AIRPORT_COUNT; i++) {
-    if (strcmp(AIRPORTS[i].icao, "SADP") == 0) { palomar = &AIRPORTS[i]; break; }
+  for (const auto& airport : AIRPORTS) {
+    if (strcmp(airport.icao, "SADP") == 0) {
+      palomar = &airport;
+      break;
+    }
   }
   if (!palomar) { _palomarInView = false; return; }
 
@@ -91,7 +102,7 @@ const AircraftState* RadarScreen::hitTest(uint16_t x, uint16_t y) const {
 }
 
 bool RadarScreen::hasNearbyTraffic(const std::vector<AircraftState>& aircraft) {
-  for (auto& a : aircraft) {
+  for (const auto& a : aircraft) {
     if (a.distanceKm <= RADAR_NEAR_KM) return true;
   }
   return false;
@@ -180,6 +191,8 @@ void RadarScreen::drawChrome() {
 
 void RadarScreen::drawPanel(const AircraftState* closest, int shown) {
   TFT_eSPI& tft = _display.tft();
+  char countStr[24];
+  formatTrafficCountLabel(shown, countStr, sizeof(countStr));
 
   // Solo la franja del panel: no tocamos el disco ni la leyenda
   tft.fillRect(0, 250, tft.width(), tft.height() - 250, TFT_BLACK);
@@ -204,7 +217,6 @@ void RadarScreen::drawPanel(const AircraftState* closest, int shown) {
     tft.drawString("Sin trafico en rango", 8, 262, 2);
   }
 
-  char countStr[24];
   tft.setTextDatum(TR_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(countStr, tft.width() - 8, 286, 1);

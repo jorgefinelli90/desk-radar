@@ -80,19 +80,30 @@ void MapScreen::drawPlane(TFT_eSPI& tft, int x, int y, double trackDeg, uint16_t
   tft.fillTriangle(rx(0, 3), ry(0, 3), rx(2.5f, 6), ry(2.5f, 6), rx(0, 5.5f), ry(0, 5.5f), color);
 }
 
+// Dibuja la casa y anota ella misma su zona a restaurar. Las dos cosas juntas a
+// proposito: antes el rect se calculaba aparte en render() con (int)hx mientras
+// el dibujo usaba lroundf(hx). Truncar y redondear difieren en un pixel, asi que
+// el rect quedaba corrido y al repintar sobraba un pedazo del anillo blanco
+// pegado al mapa. Con un solo entero para dibujar y para borrar no puede pasar.
 void MapScreen::drawHome(TFT_eSPI& tft) {
   const MapAsset& asset = MAP_ASSETS[_assetIdx];
   float hx = GeoMap::screenX(HOME_LON, asset);
   float hy = GeoMap::screenY(HOME_LAT, asset);
   if (!GeoMap::inView(hx, hy)) return;
 
-  int px = (int)lroundf(hx);
-  int py = MAP_TOP + (int)lroundf(hy);
+  const int ix = (int)lroundf(hx);   // coordenadas de la IMAGEN (las de _dirty)
+  const int iy = (int)lroundf(hy);
+  const int py = MAP_TOP + iy;       // y de PANTALLA
 
   // Anillo oscuro + punto amarillo: se distingue sobre cualquier fondo del mapa
-  tft.drawCircle(px, py, 5, TFT_BLACK);
-  tft.drawCircle(px, py, 4, TFT_WHITE);
-  tft.fillCircle(px, py, 3, TFT_YELLOW);
+  tft.drawCircle(ix, py, 5, TFT_BLACK);
+  tft.drawCircle(ix, py, 4, TFT_WHITE);
+  tft.fillCircle(ix, py, 3, TFT_YELLOW);
+
+  // El circulo mas grande tiene radio 5 (ocupa ix-5..ix+5): un pixel de margen
+  // de cada lado y el rect cubre el dibujo entero.
+  const int R = 6;
+  _dirty.push_back({ ix - R, iy - R, R * 2 + 1, R * 2 + 1 });
 }
 
 void MapScreen::drawLegend(TFT_eSPI& tft) {
@@ -195,15 +206,9 @@ void MapScreen::render(std::vector<AircraftState>& aircraft) {
   }
 
   // --- Casa ----------------------------------------------------------------
+  // drawHome() anota tambien su zona a restaurar: el rect y el dibujo tienen
+  // que salir del mismo redondeo (ver el comentario de la funcion).
   drawHome(tft);
-  {
-    const MapAsset& a = MAP_ASSETS[_assetIdx];
-    float hx = GeoMap::screenX(HOME_LON, a);
-    float hy = GeoMap::screenY(HOME_LAT, a);
-    if (GeoMap::inView(hx, hy)) {
-      _dirty.push_back({ (int)hx - 6, (int)hy - 6, 12, 12 });
-    }
-  }
 
   // --- Aviones -------------------------------------------------------------
   std::sort(aircraft.begin(), aircraft.end(),
