@@ -250,6 +250,8 @@ a `0`.
   Eso último importa en el Radar: el barrido gira igual aunque no llegue nada,
   así que sin este aviso una API caída se ve exactamente igual que todo
   funcionando.
+- **Actualizar por WiFi**: `desk-radar.local/update` recibe un `firmware.bin` y
+  reinicia con la version nueva, sin cable. Ver [OTA](#actualizar-por-wifi-ota).
 - **Volver a Home**: en cualquier pantalla, tocá la franja superior (donde
   dice "< HOME") para volver al menú principal.
 
@@ -749,7 +751,47 @@ equipo que tenga `secrets.h`: `clearWifi()` deja el SSID vacío, y en el arranqu
 siguiente la precarga lo volvería a llenar, así que el reset se desharía solo y
 en silencio.
 
-### Partición `huge_app`
+## Actualizar por WiFi (OTA)
+
+Con el dispositivo conectado, entrá a **`desk-radar.local/update`**, elegí el
+`firmware.bin` que PlatformIO deja en `.pio/build/esp32dev/` y dale a
+actualizar. Sube con barra de progreso y el aparato se reinicia solo. Una
+actualización de 1,2 MB tarda unos 11 segundos.
+
+La página te dice desde qué partición estás corriendo y en cuál se va a
+escribir: van alternando `app0` → `app1` → `app0`. Si algo sale mal a mitad de
+camino, el bootloader sigue arrancando la que estaba, porque la nueva se marca
+como válida recién cuando terminó de escribirse entera.
+
+Para confirmar que entró, mirá la **versión** (`FIRMWARE_VERSION` en `config.h`)
+en el panel: si cambió el número, está corriendo el binario nuevo.
+
+También se puede desde la línea de comandos:
+
+```bash
+curl --digest -u admin:TU_PIN -H "Expect:" \
+     -F "u=@.pio/build/esp32dev/firmware.bin" \
+     http://desk-radar.local/update
+```
+
+Dos cosas que **no** cambian por OTA: los mapas (van en su propia partición, se
+suben con `pio run -t uploadfs`) y la tabla de particiones. Si venís de una
+versión anterior a `partitions_ota.csv`, el primer flasheo tiene que ser por
+cable.
+
+### Particiones
+
+`partitions_ota.csv`: dos slots de app de 1,5 MB, 896 KB de LittleFS y el
+coredump. El firmware ocupa ~1,19 MB, o sea el 76 % de un slot.
+
+Al pasar de `huge_app.csv` a esta tabla se cuidó que **`spiffs` quedara en el
+mismo offset (`0x310000`) y con el mismo tamaño (`0xE0000`)**, así que —a
+diferencia del cambio de esquema anterior, que está documentado abajo como
+trampa— **no hizo falta volver a subir los mapas**. `nvs` también sigue en
+`0x9000`, así que la calibración del touch, las credenciales y el PIN
+sobrevivieron.
+
+### Partición `huge_app` (esquema anterior)
 
 Con el esquema `default` la app tenía 1,31 MB y ya estaba al 83%: el portal web
 no entraba. Se pasó a `huge_app.csv` (3 MB de app, sin slot OTA, que no se usa).

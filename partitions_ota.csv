@@ -1,0 +1,29 @@
+# Tabla de particiones de desk-radar, con dos slots de app para poder actualizar
+# por WiFi (OTA).
+#
+# Se venia de huge_app.csv, que daba 3 MB para una sola app y por eso no dejaba
+# actualizar sin cable. El firmware ocupa ~1,19 MB, asi que entra dos veces en
+# 1,5 MB con un 25% de margen.
+#
+# LO IMPORTANTE DE ESTE LAYOUT: "spiffs" queda en el MISMO offset (0x310000) y
+# con el MISMO tamano (0xE0000) que tenia en huge_app.csv. O sea que al cambiar
+# de tabla NO hay que volver a correr "pio run -t uploadfs": los mapas siguen
+# donde estaban. Eso fue justo lo que hubo que hacer la vez anterior que se
+# cambio el esquema, y estaba documentado como trampa en el README.
+#
+# "nvs" tambien sigue en 0x9000, asi que la calibracion del touch, las
+# credenciales y el PIN del panel sobreviven al cambio.
+#
+# Las cuentas cierran en los 4 MB de flash:
+#   0x10000  + 0x180000 = 0x190000   (fin de app0)
+#   0x190000 + 0x180000 = 0x310000   (fin de app1)
+#   0x310000 + 0xE0000  = 0x3F0000   (fin de spiffs)
+#   0x3F0000 + 0x10000  = 0x400000   (fin de coredump = 4 MB)
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x180000,
+app1,       app,  ota_1,    0x190000, 0x180000,
+spiffs,     data, spiffs,   0x310000, 0xE0000,
+coredump,   data, coredump, 0x3F0000, 0x10000,

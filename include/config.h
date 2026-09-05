@@ -34,6 +34,12 @@ static const uint32_t TOUCH_DEBOUNCE_MS = 120;
 // botón y responde el de al lado). Acordate de volverlo a 0 después.
 #define FORCE_TOUCH_CALIBRATION 0
 
+// --- Version del firmware ---
+// Se muestra en el panel web. Sirve para confirmar de un vistazo que una
+// actualizacion por WiFi entro de verdad: si el numero cambio, el dispositivo
+// esta corriendo el binario nuevo.
+static const char* FIRMWARE_VERSION = "1.3.0";
+
 // --- Ubicación de referencia (tu casa) ---
 // constexpr y no const, por el mismo motivo que RADAR_RANGE_KM: RadarScreen.cpp
 // los compara contra el centro del mapa generado en un static_assert, y para eso

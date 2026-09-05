@@ -95,6 +95,19 @@ class WebPortal {
     void handleMessageForm();
     void handleMessagePost();
 
+    // --- Actualizacion por WiFi (OTA) ---
+    // El POST tiene dos handlers: uno que corre por cada trozo del .bin que va
+    // llegando (handleUpdateUpload) y otro al final, cuando ya se recibio todo
+    // (handleUpdateDone). Es como WebServer maneja las subidas de archivos.
+    void handleUpdateForm();
+    void handleUpdateUpload();
+    void handleUpdateDone();
+
+    // La autenticacion del OTA no puede contestar en medio del upload: cuando
+    // se rechaza se anota aca y el 401 lo manda el handler final.
+    bool   _otaDenied = false;
+    String _otaError;
+
     String pageShell(const String& title, const String& body);
     String configFormHtml(const char* action, const char* submitLabel);
     String uptimeText() const;

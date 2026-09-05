@@ -2,6 +2,8 @@
 #include "config.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
 
 static const byte DNS_PORT = 53;
 
@@ -73,7 +75,8 @@ String WebPortal::pageShell(const String& title, const String& body) {
   h += "<h1>desk-radar</h1><div class=\"sub\">" + title + "</div>";
   if (!_apMode) {
     h += "<nav><a href=\"/\">Estado</a><a href=\"/config\">Configuracion</a>"
-         "<a href=\"/message\">Mensaje</a></nav>";
+         "<a href=\"/message\">Mensaje</a>"
+         "<a href=\"/update\">Firmware</a></nav>";
   }
   h += body;
   h += "</div></body></html>";
@@ -194,6 +197,7 @@ void WebPortal::handleRoot() {
   body += "<tr><td>Direccion</td><td>http://" + _hostname + ".local/</td></tr>";
   body += "<tr><td>Senal</td><td>" + String(WiFi.RSSI()) + " dBm</td></tr>";
   body += "<tr><td>Encendido hace</td><td>" + uptimeText() + "</td></tr>";
+  body += "<tr><td>Firmware</td><td>" + String(FIRMWARE_VERSION) + "</td></tr>";
 
   body += "<tr><td>Ultimo fetch OpenSky</td><td>";
   if (_lastFetchOkMs == 0) {
@@ -345,12 +349,193 @@ bool WebPortal::takeMessage(String& out) {
   return true;
 }
 
+// --- Actualizacion por WiFi (OTA) -------------------------------------------
+// Hasta que se paso a partitions_ota.csv esto no era posible: con huge_app habia
+// un solo slot de app de 3 MB y no habia donde escribir el binario nuevo sin
+// pisar el que estaba corriendo. Ahora hay dos de 1,5 MB y el bootloader arranca
+// el que quedo marcado como valido.
+
+void WebPortal::handleUpdateForm() {
+  if (!requireAuth()) return;
+
+  const esp_partition_t* corriendo = esp_ota_get_running_partition();
+  const esp_partition_t* destino   = esp_ota_get_next_update_partition(NULL);
+
+  String body = "<div class=\"card\"><table>";
+  body += "<tr><td>Version</td><td>" + String(FIRMWARE_VERSION) + "</td></tr>";
+  body += "<tr><td>Corriendo desde</td><td>" +
+          String(corriendo ? corriendo->label : "?") + "</td></tr>";
+  body += "<tr><td>Se va a escribir en</td><td>" +
+          String(destino ? destino->label : "?") + "</td></tr>";
+  if (destino) {
+    body += "<tr><td>Espacio del slot</td><td>" +
+            String(destino->size / 1024) + " KB</td></tr>";
+  }
+  body += "</table></div>";
+
+  body +=
+    "<form id=\"f\"><div class=\"card\">"
+    "<label>Archivo de firmware (.bin)</label>"
+    "<input type=\"file\" id=\"b\" accept=\".bin\" required>"
+    "<div class=\"hint\">Es el <b>firmware.bin</b> que deja PlatformIO en "
+    ".pio/build/esp32dev/. No subas el de los mapas: para eso esta uploadfs.</div>"
+    "</div><button type=\"submit\">Actualizar y reiniciar</button></form>"
+    "<div class=\"card\" id=\"p\" style=\"display:none\">"
+    "<div id=\"pt\">Subiendo...</div>"
+    "<div style=\"background:#0f1319;border-radius:6px;height:10px;margin-top:10px\">"
+    "<div id=\"pb\" style=\"background:#2f7ddb;height:10px;width:0;border-radius:6px;"
+    "transition:width .2s\"></div></div></div>"
+
+    "<script>"
+    "var f=document.getElementById('f'),b=document.getElementById('b'),"
+    "p=document.getElementById('p'),pt=document.getElementById('pt'),"
+    "pb=document.getElementById('pb');"
+    "f.onsubmit=function(e){e.preventDefault();"
+    "if(!b.files.length)return;"
+    "var d=new FormData();d.append('u',b.files[0]);"
+    "var x=new XMLHttpRequest();"
+    "p.style.display='block';"
+    // El navegador ya viene autenticado de esta misma pagina, asi que el POST
+    // reusa las credenciales sin volver a preguntar.
+    "x.open('POST','/update',true);"
+    "x.upload.onprogress=function(ev){if(ev.lengthComputable){"
+    "var q=Math.round(ev.loaded*100/ev.total);pb.style.width=q+'%';"
+    "pt.textContent='Subiendo... '+q+'%';}};"
+    "x.onload=function(){"
+    "if(x.status==200){pt.textContent='Listo. El dispositivo se esta reiniciando.';"
+    "pb.style.background='#1f8a4c';pb.style.width='100%';"
+    "setTimeout(function(){location.href='/';},9000);}"
+    "else{pt.textContent='Fallo: '+x.responseText;pb.style.background='#c0392b';}};"
+    "x.onerror=function(){pt.textContent='Se corto la conexion durante la subida.';"
+    "pb.style.background='#c0392b';};"
+    "x.send(d);};"
+    "</script>";
+
+  _server.send(200, "text/html", pageShell("Actualizar el firmware", body));
+}
+
+// Corre una vez por cada trozo del .bin que va llegando.
+void WebPortal::handleUpdateUpload() {
+  // OJO: WebServer usa ESTE MISMO handler para dos cosas distintas. Si el POST
+  // viene como multipart/form-data lo trata como subida de archivo y llena
+  // _currentUpload; si viene con cualquier otro cuerpo lo trata como "raw" y
+  // _currentUpload queda NULO, con lo cual _server.upload() lo desreferencia y
+  // el dispositivo entra en panic (LoadProhibited).
+  //
+  // O sea que sin este chequeo, un POST cualquiera a /update reiniciaba la
+  // placa, y encima antes de pedir el PIN: se colgaba solo con mandar un cuerpo
+  // de texto. Por eso se salta antes de tocar upload().
+  if (!_server.header("Content-Type").startsWith("multipart/")) {
+    _otaError = "El firmware tiene que subirse como multipart/form-data.";
+    return;
+  }
+
+  HTTPUpload& up = _server.upload();
+
+  if (up.status == UPLOAD_FILE_START) {
+    _otaDenied = false;
+    _otaError = "";
+
+    // Autenticacion. Aca NO se puede contestar un 401: estamos en medio del
+    // parseo del multipart y el cuerpo sigue llegando. Se anota y el handler
+    // final es el que responde.
+    const String& pin = _cfg.get("pin");
+    if (!_apMode && pin.length() > 0 &&
+        !_server.authenticate(WEB_AUTH_USER, pin.c_str())) {
+      _otaDenied = true;
+      Serial.println("[OTA] Rechazado: sin credenciales");
+      return;
+    }
+
+    // Escribir la flash mientras la tarea de red esta en mitad de un fetch es
+    // pedir problemas: se espera a que termine, igual que al guardar la config.
+    if (_busyProbe) {
+      uint32_t t0 = millis();
+      while (_busyProbe() && millis() - t0 < 20000) delay(20);
+    }
+
+    Serial.printf("[OTA] Recibiendo %s\n", up.filename.c_str());
+
+    // UPDATE_SIZE_UNKNOWN: el navegador no manda el largo por adelantado en el
+    // multipart, asi que la libreria usa el slot entero y al final recorta.
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      _otaError = Update.errorString();
+      Serial.printf("[OTA] No arranco: %s\n", _otaError.c_str());
+    }
+
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (_otaDenied || _otaError.length()) return;
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) {
+      _otaError = Update.errorString();
+      Serial.printf("[OTA] Error escribiendo: %s\n", _otaError.c_str());
+    }
+
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (_otaDenied || _otaError.length()) {
+      Update.abort();
+      return;
+    }
+    // true = marcar la particion nueva como la que tiene que arrancar.
+    if (Update.end(true)) {
+      Serial.printf("[OTA] %u bytes escritos, listo para reiniciar\n",
+                    (unsigned)up.totalSize);
+    } else {
+      _otaError = Update.errorString();
+      Serial.printf("[OTA] No cerro: %s\n", _otaError.c_str());
+    }
+
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    Update.abort();
+    _otaError = "subida interrumpida";
+    Serial.println("[OTA] Subida interrumpida");
+  }
+}
+
+void WebPortal::handleUpdateDone() {
+  // La autenticacion va PRIMERO, antes que cualquier error. Un cliente que
+  // todavia no mando credenciales tiene que recibir un 401 con el desafio para
+  // poder reintentar; si le contestamos 500 se queda con el error y no vuelve a
+  // intentar. Es lo que pasaba con la peticion de sondeo que hace curl --digest
+  // antes de conocer el nonce.
+  if (_otaDenied || !requireAuth()) {
+    _otaDenied = false;
+    _otaError = "";
+    return;
+  }
+
+  if (_otaError.length()) {
+    String err = _otaError;
+    _otaError = "";
+    _server.send(500, "text/plain", err);
+    return;
+  }
+
+  _server.send(200, "text/plain", "ok");
+
+  // Que alcance a irse la respuesta antes del reset, igual que al guardar la
+  // configuracion.
+  delay(1200);
+  ESP.restart();
+}
+
 void WebPortal::registerRoutes() {
+  // Hace falta para poder mirar el Content-Type en el handler del OTA: por
+  // defecto WebServer descarta todos los headers que no le sirven a el.
+  static const char* HEADERS[] = { "Content-Type" };
+  _server.collectHeaders(HEADERS, 1);
+
   _server.on("/", HTTP_GET, [this]() { handleRoot(); });
   _server.on("/config", HTTP_GET, [this]() { handleConfigForm(); });
   _server.on("/config", HTTP_POST, [this]() { handleConfigSave(); });
   _server.on("/message", HTTP_GET, [this]() { handleMessageForm(); });
   _server.on("/api/message", HTTP_POST, [this]() { handleMessagePost(); });
+
+  // El POST del firmware lleva dos handlers: el segundo corre al terminar, el
+  // tercero por cada trozo que llega.
+  _server.on("/update", HTTP_GET, [this]() { handleUpdateForm(); });
+  _server.on("/update", HTTP_POST,
+             [this]() { handleUpdateDone(); },
+             [this]() { handleUpdateUpload(); });
 }
 
 // Android, iOS y Windows piden URLs conocidas para saber si la red tiene
