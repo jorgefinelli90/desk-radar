@@ -7,6 +7,8 @@ void NewsScreen::render(const NewsClient& news) {
 
   _display.showStatusBar("< HOME  NOTICIAS", "GNews");
 
+  _rowCount = 0; // sin datos no hay nada tocable
+
   if (!news.hasData()) {
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
@@ -32,6 +34,7 @@ void NewsScreen::render(const NewsClient& news) {
   const int rowH  = 58;
 
   int y = 20;
+  _rowCount = 0;
 
   for (size_t i = 0; i < items.size(); i++) {
     if (y + rowH > tft.height()) break; // no dibujamos filas cortadas
@@ -65,6 +68,20 @@ void NewsScreen::render(const NewsClient& news) {
       tft.drawString(TextUtils::fitToWidth(tft, meta, textW, 1), textX, ty + 2, 1);
     }
 
+    // Zona tocable de la fila, para abrir la noticia. Ocupa el ancho completo:
+    // con touch resistivo y dedo, apuntarle al renglon del titular no es
+    // realista.
+    if (_rowCount < MAX_ROWS) {
+      _rows[_rowCount++] = { 0, y, (int)tft.width(), rowH };
+    }
+
     y += rowH;
   }
+}
+
+int NewsScreen::hitTest(uint16_t x, uint16_t y) const {
+  for (int i = 0; i < _rowCount; i++) {
+    if (_rows[i].contains(x, y)) return i;
+  }
+  return -1;
 }

@@ -40,7 +40,7 @@ void AirportScreen::render(const AirportDef& airport,
 
   for (size_t i = 0; i < relevant.size() && y + rowH < listBottom; i++) {
     const AircraftState* a = relevant[i];
-    String cs = a->callsign.length() ? a->callsign : a->icao24;
+    const char* cs = a->label();
 
     tft.drawFastHLine(0, y, tft.width(), TFT_DARKGREEN);
 

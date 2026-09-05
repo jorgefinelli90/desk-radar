@@ -1,5 +1,6 @@
 #include "services/NewsClient.h"
 #include "config.h"
+#include "core/DataLock.h"
 #include "utils/TextUtils.h"
 #include "core/DeviceConfig.h"
 #include <WiFiClientSecure.h>
@@ -101,26 +102,43 @@ bool NewsClient::refresh() {
     return false;
   }
 
-  _items.clear();
+  // Se arma en un vector local y se publica de una sola vez bajo el candado.
+  // Esto corre en la tarea de red (core 0) mientras el loop puede estar
+  // dibujando la pantalla de noticias en el otro nucleo: un clear() seguido de
+  // push_back() en vivo le reasignaria el vector abajo de los pies.
+  std::vector<NewsItem> frescos;
   for (JsonObject a : articles) {
     NewsItem item;
     item.title  = TextUtils::toAscii(a["title"].as<String>());
     item.source = TextUtils::toAscii(a["source"]["name"].as<String>());
     item.time   = localTimeFromIso(a["publishedAt"].as<String>());
+    // GNews manda un resumen de una o dos frases en "description". Es lo que
+    // se lee al tocar el titular; el campo "content" del plan gratuito viene
+    // cortado a la mitad con un "... [1234 chars]" pegado, asi que no sirve.
+    item.summary = TextUtils::toAscii(a["description"].as<String>());
 
     if (item.title.length() == 0) continue;
 
-    _items.push_back(item);
-    if ((int)_items.size() >= NEWS_MAX_ITEMS) break;
+    frescos.push_back(item);
+    if ((int)frescos.size() >= NEWS_MAX_ITEMS) break;
   }
 
-  _ok = !_items.empty();
-  if (_ok) {
+  const bool hay = !frescos.empty();
+  const int  cuantos = (int)frescos.size();
+
+  {
+    DataLock::Guard g;
+    // Si no vino nada se conservan los titulares anteriores, por el mismo
+    // motivo que en OpenSkyClient: una respuesta pobre no tiene por que dejar
+    // la pantalla en blanco.
+    if (hay) _items.swap(frescos);
+    _ok = hay;
+    _lastError = hay ? String("") : String("Sin titulares");
+  }
+
+  if (hay) {
     _lastOkMs = millis();
-    _lastError = "";
-    Serial.printf("[News] %d titulares actualizados\n", (int)_items.size());
-  } else {
-    _lastError = "Sin titulares";
+    Serial.printf("[News] %d titulares actualizados\n", cuantos);
   }
 
   return _ok;

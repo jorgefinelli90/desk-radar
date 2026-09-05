@@ -141,6 +141,33 @@ El mensaje entra en la pantalla como un banner que baja deslizándose, se queda
 unos 5,5 segundos y se retira, **encima de la pantalla que estuviera activa**
 (Home, Radar, Mapa, la que sea). Al terminar, esa pantalla se repinta limpia.
 
+### PIN del panel web
+
+El panel (`desk-radar.local`) arranca **abierto**: cualquiera en tu red puede
+verlo y cambiar la configuración. La página de estado lo avisa en grande
+mientras siga así.
+
+Para cerrarlo, cargá un **PIN del panel web** en Configuración. A partir de ahí
+el navegador pide usuario y clave:
+
+| | |
+|---|---|
+| Usuario | `admin` |
+| Clave | el PIN que pusiste |
+
+Se usa autenticación **Digest** y no Basic: esto va por HTTP plano, y con Basic
+el PIN viajaría en cada request en base64, que es texto legible para cualquiera
+que mire la red.
+
+Dos formas de sacarlo:
+
+- Desde el propio panel, escribiendo `off` en el campo del PIN. Hace falta
+  porque un campo secreto vacío significa "no lo cambies", así que sin una
+  salida explícita, una vez puesto no habría forma de volver atrás.
+- Con el botón **Reiniciar configuración** de la pantalla de Ajustes, que borra
+  WiFi y PIN. Es la vía si te lo olvidaste: exige estar parado frente al aparato
+  y confirmar con dos toques.
+
 ### 4. Resetear la configuración
 
 En el dispositivo: **AJUSTES → "Reiniciar config WiFi"**. Pide un segundo toque
@@ -201,6 +228,9 @@ a `0`.
   titulares llegan en UTF-8 con tildes y eñes, que las fuentes embebidas de
   TFT_eSPI no tienen, así que se pliegan a ASCII antes de dibujarlos
   (`TextUtils::toAscii`); lo que no entra a lo ancho se corta con "...".
+  **Tocá un titular y se abre la noticia**: el título completo sin recortar, el
+  medio, la hora y el resumen que manda GNews. Cualquier toque vuelve a la
+  lista.
 - **Pantalla Clima**: temperatura, sensación térmica, condición, humedad y
   viento para `HOME_LAT`/`HOME_LON`, con un ícono dibujado a mano con
   primitivas de TFT_eSPI (sol, nubes, lluvia, nieve, niebla, tormenta) según
@@ -232,6 +262,9 @@ src/
 |-- app/
 |   `-- main.cpp                 # punto de entrada y ciclo principal
 |-- core/
+|   |-- Clock.{h,cpp}            # hora por NTP
+|   |-- DataLock.{h,cpp}         # candado entre la red y el loop
+|   |-- NetTask.{h,cpp}          # toda la red, en el core 0
 |   |-- Banner.{h,cpp}           # mensajes animados
 |   |-- DeviceConfig.{h,cpp}     # configuracion persistente
 |   |-- DisplayManager.{h,cpp}   # TFT y barra de estado
@@ -246,6 +279,7 @@ src/
 |   |-- HomeScreen.{h,cpp}
 |   |-- InfoMenuScreen.{h,cpp}
 |   |-- MapScreen.{h,cpp}
+|   |-- NewsDetailScreen.{h,cpp}   # la noticia abierta desde la lista
 |   |-- NewsScreen.{h,cpp}
 |   |-- RadarScreen.{h,cpp}
 |   |-- SettingsScreen.{h,cpp}
@@ -256,6 +290,7 @@ src/
 |   |-- OpenSkyClient.{h,cpp}     # vuelos y OAuth2
 |   `-- WeatherClient.{h,cpp}     # clima y cache
 |-- utils/
+|   |-- StrUtils.h                # copia a buffers fijos, sin dependencias
 |   |-- GeoMap.h                  # proyeccion geografica
 |   |-- GeoUtils.h                # calculos geograficos
 |   `-- TextUtils.h               # texto y ajuste por ancho
@@ -532,6 +567,116 @@ año, así que alcanza con `TZ_OFFSET_H` y no hace falta arrastrar la base de
 datos de zonas horarias.
 
 ## Notas de implementación
+
+### `AircraftState` sin `String`
+
+Los dos campos de texto de un avión son `char icao24[7]` y `char callsign[9]`,
+no `String`. Los largos son fijos por especificación ADS-B: el ICAO24 son 6
+dígitos hexadecimales y el callsign, 8 caracteres.
+
+El motivo es la fragmentación del heap. Cada fetch trae hasta 60 aviones, y con
+dos `String` por avión eran unos **120 malloc/free cada 5 a 30 segundos**, más
+los que agregaban las copias de `AircraftBlip` y el `std::sort`. En una pantalla
+pensada para quedar encendida semanas eso va picando el heap, y justo las dos
+cosas que más lo necesitan piden bloques **grandes y contiguos**: el sprite del
+radar (20 KB) y el stack de la tarea de red (10 KB).
+
+Por eso el dashboard muestra ahora **"Bloque contiguo mayor"** además del heap
+libre: es la medida real de fragmentación. El heap puede tener 150 KB libres
+repartidos en pedacitos y no poder darte los 20 KB seguidos del sprite. Si ese
+número baja con las horas, algo está fragmentando.
+
+El texto entra por `StrUtils::copyTrimmed()`, que recorta y **nunca desborda**.
+El recorte no es cosmético: OpenSky rellena el callsign a 8 caracteres con
+espacios (`"AAL123  "`), y sin sacarlos las etiquetas quedan descentradas y
+`textWidth()` mide de más. Está testeada, con centinela incluido para detectar
+una escritura fuera de rango.
+
+Las cuatro pantallas que hacían `callsign.length() ? callsign : icao24` a mano
+usan `AircraftState::label()`.
+
+### Una fila por pantalla
+
+`main.cpp` tenía nueve modos repartidos en **cuatro cadenas de `if/else`
+distintas**: una para el fetch, otra para el render, otra en `enterMode()` y
+otra en el `loop()`. Agregar una pantalla obligaba a tocar las cuatro, y
+olvidarse de una no daba error de compilación: daba una pantalla que no
+refrescaba, o que no respondía al toque.
+
+Ahora cada modo es **una fila de `MODE_OPS`**, con todo lo que necesita el
+router: de qué se alimenta, si la barra de arriba vuelve a Home, cuánto duerme
+el loop, y los punteros a `onEnter` / `onExit` / `render` / `tick` /
+`handleTap`. Los lambdas van sin captura a propósito: así convierten a puntero
+de función y la tabla queda en flash en vez de en RAM.
+
+`handleTap` devuelve **a qué modo ir**; para quedarse, devuelve el mismo. Las
+acciones que no son navegación —cambiar el zoom del mapa, rotar de aeropuerto,
+recalibrar el touch— se resuelven adentro del lambda y redibujan solas.
+
+Y hay una red de seguridad:
+
+```cpp
+static_assert(MODE_COUNT == (int)Mode::Settings + 1,
+              "Falta (o sobra) una fila en MODE_OPS: ...");
+```
+
+Agregar un modo al `enum` y olvidar la fila **no compila**. La pantalla de
+noticia (`Mode::NewsDetail`) se sumó después de este refactor y fue exactamente
+eso: una fila.
+
+### El radar suelta sus 40 KB al salir
+
+`RadarScreen` reserva un sprite de 20 KB para el disco y otros 20 KB para la
+copia del mapa de fondo. Se pedían la primera vez y no se liberaban nunca, ni
+estando en Clima. Son los mismos 40 KB que compiten con el pico del handshake
+TLS y con el stack de la tarea de red, y encima se piden **contiguos**, que es
+lo primero que escasea cuando el heap se fragmenta.
+
+`onExit()` los suelta al cambiar de pantalla y deja que `ensureDisc()` vuelva a
+asignarlos al volver. Reentrar cuesta releer 20 KB de LittleFS: imperceptible al
+lado del fetch que igual se dispara al entrar. Al salir queda la cuenta en el
+log:
+
+```
+[Radar] Sprite y mapa liberados, heap libre 202064, bloque mayor 110592
+```
+
+### La red vive en el core 0
+
+El ESP32 tiene dos núcleos y durante mucho tiempo el firmware usó uno solo. Los
+tres clientes HTTP se llamaban desde el `loop()`, que corre en el core 1 junto
+con el touch, el barrido del radar y el servidor web. Un fetch de OpenSky son
+varios segundos entre el handshake TLS y la respuesta, y en ese rato **no corría
+nada más**: el barrido se congelaba, el touch no respondía y el dashboard no
+atendía. El cartel "Buscando aviones..." existía sólo para tapar eso.
+
+Ahora `src/core/NetTask` corre en el **core 0** (donde ya vive el stack de WiFi)
+con 10 KB de stack — el handshake TLS es lo que más pide; con los 4 KB del
+default la tarea se muere en el primer fetch. El loop pide trabajo con
+`request()` y sigue dibujando; el resultado se recoge en `netTick()`, que no
+bloquea nunca.
+
+Lo que cruza entre núcleos —la lista de aviones, los titulares, el clima— se
+publica bajo `src/core/DataLock`. La regla que hace que el candado no arruine lo
+que vinimos a arreglar: **se toma sólo para publicar o leer un resultado ya
+armado, nunca durante una request**. Publicar es un swap de vector; leer es
+dibujar una pantalla.
+
+Medido en la placa con `RADAR_DEBUG_TIMING=1`, con el fetch cayendo a los 32 s:
+
+```
+ 30.9s   18 fps   21.8 ms/frame
+ 32.2s   >>> [OpenSky] Token renovado OK
+ 32.9s   18 fps   21.9 ms/frame
+ 34.9s   18 fps   21.8 ms/frame
+```
+
+Ni un frame perdido: 18-19 fps constantes durante los 80 s de la prueba. Antes
+esa ventana era un congelamiento de varios segundos.
+
+Un efecto que sí queda: durante el handshake TLS el core 0 se satura y **el
+dashboard puede tardar unos segundos en responder**, porque lwIP también vive
+ahí. La pantalla, que es lo que se mira, no se entera.
 
 ### Por qué el servidor web es sincrónico y no ESPAsyncWebServer
 

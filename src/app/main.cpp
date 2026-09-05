@@ -6,6 +6,8 @@
 #include "core/DeviceConfig.h"  // credenciales en NVS (reemplaza a secrets.h)
 #include "core/WebPortal.h"
 #include "core/Clock.h"
+#include "core/DataLock.h"
+#include "core/NetTask.h"
 #include "core/Banner.h"
 #include "screens/SettingsScreen.h"
 #include "utils/GeoUtils.h"
@@ -20,10 +22,12 @@
 #include "screens/InfoMenuScreen.h"
 #include "services/NewsClient.h"
 #include "screens/NewsScreen.h"
+#include "screens/NewsDetailScreen.h"
 #include "services/WeatherClient.h"
 #include "screens/WeatherScreen.h"
 
-enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, Weather, Settings };
+enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, NewsDetail,
+                  Weather, Settings };
 
 DisplayManager display;
 Clock          deviceClock;   // NTP; la barra de estado lo consulta via display
@@ -32,6 +36,8 @@ OpenSkyClient  opensky;      // credenciales desde NVS, ya no del compilador
 NewsClient     newsClient;   // idem
 WeatherClient  weatherClient;
 WebPortal      webPortal(display, deviceConfig);
+// Toda la red vive en el core 0: el loop pide y sigue dibujando (ver NetTask.h)
+NetTask        netTask(opensky, newsClient, weatherClient);
 Banner         banner(display);
 SettingsScreen settingsScreen(display);
 // mapTiles va antes que las pantallas que lo usan: guardan una referencia, y el
@@ -44,6 +50,7 @@ MapScreen      mapScreen(display, mapTiles);
 DetailScreen   detailScreen(display);
 InfoMenuScreen infoMenuScreen(display);
 NewsScreen     newsScreen(display);
+NewsDetailScreen newsDetailScreen(display);
 WeatherScreen  weatherScreen(display);
 
 Mode currentMode = Mode::Home;
@@ -52,6 +59,11 @@ int  currentAirportIdx = 0;
 
 // Copia del avión que se está viendo en modo Detail
 AircraftState selectedAircraft;
+
+// Idem para la noticia abierta. Copia y no indice: la tarea de red puede
+// republicar los titulares mientras estas leyendo uno, y el que estaba en la
+// posicion 3 pasaria a ser otro.
+NewsItem selectedNews;
 
 std::vector<AircraftState> aircraft;
 uint32_t lastFetch = 0;
@@ -136,6 +148,12 @@ void enrichWithGeo(std::vector<AircraftState>& list, double refLat, double refLo
   }
 }
 
+void renderCurrentMode(); // definida mas abajo; netTick() la necesita antes
+
+// Le PIDE a la tarea de red lo que necesita la pantalla actual y vuelve
+// enseguida. Antes esta funcion hacia el fetch acá mismo y se llevaba puestos
+// varios segundos del loop; ahora el trabajo pasa al core 0 y el resultado se
+// recoge en netTick().
 void fetchForCurrentMode() {
   if (WiFi.status() != WL_CONNECTED) {
     // Sin red no hay nada que pedir, pero el intento se marca igual: si no, el
@@ -147,26 +165,48 @@ void fetchForCurrentMode() {
 
   if (currentMode == Mode::Radar || currentMode == Mode::Map) {
     // Mismo recuadro para las dos: miran la misma zona (ver HOME_FETCH_RADIUS_KM)
-    auto box = GeoUtils::boundingBox(HOME_LAT, HOME_LON, HOME_FETCH_RADIUS_KM);
-    if (opensky.fetchStates(box, aircraft)) {
-      enrichWithGeo(aircraft, HOME_LAT, HOME_LON);
-      webPortal.noteFetchOk();
-    }
+    netTask.request(NetJob::Aircraft,
+                    GeoUtils::boundingBox(HOME_LAT, HOME_LON, HOME_FETCH_RADIUS_KM));
   } else if (currentMode == Mode::Airports) {
     const AirportDef& ap = AIRPORTS[currentAirportIdx];
-    auto box = GeoUtils::boundingBox(ap.lat, ap.lon, ap.boxRadiusKm);
-    if (opensky.fetchStates(box, aircraft)) {
-      enrichWithGeo(aircraft, HOME_LAT, HOME_LON); // distancia mostrada siempre relativa a casa
-      webPortal.noteFetchOk();
-    }
+    netTask.request(NetJob::Aircraft,
+                    GeoUtils::boundingBox(ap.lat, ap.lon, ap.boxRadiusKm));
   } else if (currentMode == Mode::News) {
     // Cada cliente decide solo si le toca pedir o si el cache sigue vigente
-    if (newsClient.shouldRefresh()) newsClient.refresh();
+    if (newsClient.shouldRefresh()) netTask.request(NetJob::News);
   } else if (currentMode == Mode::Weather) {
-    if (weatherClient.shouldRefresh()) weatherClient.refresh();
+    if (weatherClient.shouldRefresh()) netTask.request(NetJob::Weather);
   }
 
   lastFetch = millis();
+}
+
+// Recoge lo que la tarea de red haya dejado listo. No bloquea nunca: si no hay
+// nada, las dos comprobaciones son la lectura de un bool.
+void netTick() {
+  std::vector<AircraftState> frescos;
+  if (netTask.takeAircraft(frescos)) {
+    aircraft.swap(frescos);
+    // El enriquecido geométrico se hace acá y no en la tarea a propósito: es
+    // cuenta pura sobre datos que ya son nuestros, y así la tarea suelta el
+    // candado lo antes posible.
+    enrichWithGeo(aircraft, HOME_LAT, HOME_LON); // siempre relativo a casa
+    webPortal.noteFetchOk();
+
+    // Solo si la pantalla de arriba muestra aviones. Los datos pueden llegar
+    // cuando ya te fuiste a Noticias, y repintar por eso seria trabajo al pedo.
+    if (currentMode == Mode::Radar || currentMode == Mode::Map ||
+        currentMode == Mode::Airports) {
+      renderCurrentMode();
+    }
+  }
+
+  // Noticias o clima nuevos: los datos ya están publicados, solo falta dibujar.
+  if (netTask.takeRefreshed()) {
+    if (currentMode == Mode::News || currentMode == Mode::Weather) {
+      renderCurrentMode();
+    }
+  }
 }
 
 // --- Frescura de los datos de OpenSky ---------------------------------------
@@ -207,58 +247,217 @@ static uint16_t dataStatusColor() {
   return fastMode ? TFT_GREEN : TFT_SILVER;
 }
 
-void renderCurrentMode() {
-  if (currentMode == Mode::Home) {
-    homeScreen.render();
-  } else if (currentMode == Mode::Radar) {
-    radarScreen.render(aircraft, dataStatusText(), dataStatusColor());
-  } else if (currentMode == Mode::Map) {
-    mapScreen.render(aircraft, dataAgeShort(), dataStatusColor());
-  } else if (currentMode == Mode::Detail) {
-    detailScreen.render(selectedAircraft);
-  } else if (currentMode == Mode::InfoMenu) {
-    infoMenuScreen.render();
-  } else if (currentMode == Mode::News) {
-    newsScreen.render(newsClient);
-  } else if (currentMode == Mode::Weather) {
-    weatherScreen.render(weatherClient);
-  } else if (currentMode == Mode::Settings) {
-    settingsScreen.render(WiFi.SSID(), WiFi.localIP().toString(),
-                          webPortal.hostname());
-  } else {
-    airportScreen.render(AIRPORTS[currentAirportIdx], aircraft,
-                         dataStatusText(), dataStatusColor());
+// ---------------------------------------------------------------------------
+//  Tabla de pantallas
+//
+//  Antes cada modo estaba repartido en cuatro cadenas de if/else distintas
+//  -fetch, render, enterMode y el loop-, asi que agregar una pantalla obligaba
+//  a tocar las cuatro, y olvidarse de una no daba error de compilacion: daba
+//  una pantalla que no refrescaba, o que no respondia al toque.
+//
+//  Ahora cada modo es UNA fila de MODE_OPS. Agregar una pantalla es agregar una
+//  fila; si falta un campo, no compila.
+//
+//  Los lambdas van sin captura a proposito: asi convierten a puntero de funcion
+//  y la tabla queda en flash en vez de en RAM. Acceden a los objetos globales de
+//  arriba, que es donde ya vivian.
+// ---------------------------------------------------------------------------
+
+// Abre la ficha de un avion tocado en el radar o el mapa (definida abajo: la
+// tabla la necesita antes).
+static Mode openDetailFrom(const AircraftState* hit);
+
+// De que fuente se alimenta la pantalla. Decide el ciclo de refresco.
+enum class DataNeed : uint8_t { None, Aircraft, News, Weather };
+
+struct ModeOps {
+  Mode     mode;
+  DataNeed needs;
+  bool     statusBarBack;  // tocar la barra de arriba vuelve a Home
+  uint32_t loopDelayMs;
+
+  void (*onEnter)();
+  void (*onExit)();
+  void (*render)();
+  void (*tick)();
+
+  // Devuelve a que modo ir. Para quedarse donde estamos, devuelve el mismo:
+  // las acciones que no son navegacion (cambiar el zoom, rotar de aeropuerto)
+  // se resuelven adentro y redibujan solas.
+  Mode (*handleTap)(uint16_t x, uint16_t y);
+};
+
+static const ModeOps MODE_OPS[] = {
+  { Mode::Home, DataNeed::None, false, 30,
+    []{}, []{},
+    []{ homeScreen.render(); },
+    []{},
+    [](uint16_t x, uint16_t y) {
+      switch (homeScreen.hitTest(x, y)) {
+        case HomeChoice::Radar:    return Mode::Radar;
+        case HomeChoice::Airports: currentAirportIdx = 0; return Mode::Airports;
+        case HomeChoice::Map:      return Mode::Map;
+        case HomeChoice::Info:     return Mode::InfoMenu;
+        case HomeChoice::Settings: return Mode::Settings;
+        default:                   return Mode::Home;
+      }
+    } },
+
+  { Mode::Radar, DataNeed::Aircraft, true, RADAR_LOOP_DELAY_MS,
+    []{ radarScreen.onEnter(); },
+    []{ radarScreen.onExit(); },   // suelta el sprite y el mapa: 40 KB (ARQ-7)
+    []{ radarScreen.render(aircraft, dataStatusText(), dataStatusColor()); },
+    []{ radarScreen.tick(); },
+    [](uint16_t x, uint16_t y) { return openDetailFrom(radarScreen.hitTest(x, y)); } },
+
+  { Mode::Map, DataNeed::Aircraft, true, 30,
+    []{ mapScreen.onEnter(); }, []{},
+    []{ mapScreen.render(aircraft, dataAgeShort(), dataStatusColor()); },
+    []{},
+    [](uint16_t x, uint16_t y) {
+      // El boton de abajo alterna 80 km <-> 40 km. No pide datos nuevos: los dos
+      // zooms son recortes de la misma zona que ya esta en RAM.
+      if (mapScreen.zoomButtonRect().contains(x, y)) {
+        mapScreen.toggleZoom();
+        renderCurrentMode();
+        return Mode::Map;
+      }
+      return openDetailFrom(mapScreen.hitTest(x, y));
+    } },
+
+  { Mode::Airports, DataNeed::Aircraft, true, 30,
+    []{}, []{},
+    []{ airportScreen.render(AIRPORTS[currentAirportIdx], aircraft,
+                             dataStatusText(), dataStatusColor()); },
+    []{},
+    [](uint16_t x, uint16_t y) {
+      if (airportScreen.nextButtonRect().contains(x, y)) {
+        currentAirportIdx = (currentAirportIdx + 1) % AIRPORT_COUNT;
+        lastFetch = 0;
+        aircraft.clear(); // otro aeropuerto: los que hay son de otra zona
+        fetchForCurrentMode();
+        renderCurrentMode();
+      }
+      return Mode::Airports;
+    } },
+
+  // La ficha queda congelada para leerla tranquilo: no refresca sola (needs
+  // None) y cualquier toque vuelve al origen, incluida la barra de arriba, por
+  // eso statusBarBack va en false.
+  { Mode::Detail, DataNeed::None, false, 30,
+    []{}, []{},
+    []{ detailScreen.render(selectedAircraft); },
+    []{},
+    [](uint16_t, uint16_t) { return detailReturnMode; } },
+
+  { Mode::InfoMenu, DataNeed::None, true, 30,
+    []{}, []{},
+    []{ infoMenuScreen.render(); },
+    []{},
+    [](uint16_t x, uint16_t y) {
+      switch (infoMenuScreen.hitTest(x, y)) {
+        case InfoChoice::News:    return Mode::News;
+        case InfoChoice::Weather: return Mode::Weather;
+        default:                  return Mode::InfoMenu;
+      }
+    } },
+
+  { Mode::News, DataNeed::News, true, 30,
+    []{}, []{},
+    []{
+      // Bajo candado: la tarea de red puede estar publicando titulares nuevos
+      // en el otro nucleo justo mientras los dibujamos. Es el dibujo de una
+      // pantalla, milisegundos, no un fetch.
+      DataLock::Guard g;
+      newsScreen.render(newsClient);
+    },
+    []{},
+    [](uint16_t x, uint16_t y) {
+      // Bajo candado: se consulta la lista publicada y se copia el item.
+      DataLock::Guard g;
+      const int idx = newsScreen.hitTest(x, y);
+      if (idx < 0 || idx >= (int)newsClient.items().size()) return Mode::News;
+      selectedNews = newsClient.items()[idx];
+      return Mode::NewsDetail;
+    } },
+
+  // La noticia abierta: congelada como la ficha del avion, y cualquier toque
+  // vuelve a la lista.
+  { Mode::NewsDetail, DataNeed::None, false, 30,
+    []{}, []{},
+    []{ newsDetailScreen.render(selectedNews); },
+    []{},
+    [](uint16_t, uint16_t) { return Mode::News; } },
+
+  { Mode::Weather, DataNeed::Weather, true, 30,
+    []{}, []{},
+    []{ DataLock::Guard g; weatherScreen.render(weatherClient); },
+    []{},
+    [](uint16_t, uint16_t) { return Mode::Weather; } },
+
+  { Mode::Settings, DataNeed::None, true, 30,
+    []{ settingsScreen.onEnter(); }, []{},
+    []{ settingsScreen.render(WiFi.SSID(), WiFi.localIP().toString(),
+                              webPortal.hostname()); },
+    []{ settingsScreen.tick(); },  // vence la confirmacion si el usuario se fue
+    [](uint16_t x, uint16_t y) {
+      SettingsAction action = settingsScreen.handleTap(x, y);
+      if (action == SettingsAction::ResetWifi) {
+        display.showMessage("Borrando WiFi...");
+        deviceConfig.clearAccess();
+        delay(700);
+        ESP.restart();
+      } else if (action == SettingsAction::Recalibrate) {
+        touch.recalibrate();  // bloquea hasta que toques las 3 cruces
+        renderCurrentMode();  // el wizard piso la pantalla entera
+      }
+      return Mode::Settings;
+    } },
+};
+
+static const int MODE_COUNT = sizeof(MODE_OPS) / sizeof(MODE_OPS[0]);
+
+// Si algun dia se agrega un modo al enum y no a la tabla, esto lo caza al
+// compilar en vez de dejar una pantalla muda.
+static_assert(MODE_COUNT == (int)Mode::Settings + 1,
+              "Falta (o sobra) una fila en MODE_OPS: tiene que haber una por "
+              "cada valor de Mode.");
+
+static const ModeOps& opsFor(Mode m) {
+  for (int i = 0; i < MODE_COUNT; i++) {
+    if (MODE_OPS[i].mode == m) return MODE_OPS[i];
   }
+  return MODE_OPS[0]; // inalcanzable: el static_assert garantiza la cobertura
 }
 
-void goHome() {
-  currentMode = Mode::Home;
-  renderCurrentMode();
+void renderCurrentMode() {
+  opsFor(currentMode).render();
+}
+
+// Abre la ficha de un avion tocado en el radar o el mapa. Devuelve el modo al
+// que hay que ir: Detail si el toque acerto, o el actual si no.
+static Mode openDetailFrom(const AircraftState* hit) {
+  if (!hit) return currentMode;
+  selectedAircraft = *hit;      // copia: sobrevive al proximo fetch
+  detailReturnMode = currentMode;
+  return Mode::Detail;
 }
 
 // true si las dos pantallas se alimentan del mismo fetch
 static bool sharesAircraftData(Mode a, Mode b) {
+  // El Detail es una ficha congelada sobre un avion que ya teniamos: entrar y
+  // salir no cambia la zona que estamos mirando, asi que no tiene que descartar
+  // la lista ni disparar un fetch nuevo.
+  if (a == Mode::Detail || b == Mode::Detail) return true;
+
   auto usesHomeBox = [](Mode m) { return m == Mode::Radar || m == Mode::Map; };
   return usesHomeBox(a) && usesHomeBox(b);
 }
 
-// Cartel a mostrar mientras corre el fetch de entrada, o nullptr si esa
-// pantalla no va a hacerte esperar (no usa red, no hay red, o su cache sigue
-// vigente y refresh() va a volver enseguida).
-static const char* pendingFetchMessage(Mode m) {
-  if (WiFi.status() != WL_CONNECTED) return nullptr;
-  switch (m) {
-    case Mode::Radar:
-    case Mode::Map:      return "Buscando aviones...";
-    case Mode::Airports: return "Consultando el aeropuerto...";
-    case Mode::News:     return newsClient.shouldRefresh() ? "Buscando titulares..." : nullptr;
-    case Mode::Weather:  return weatherClient.shouldRefresh() ? "Consultando el clima..." : nullptr;
-    default:             return nullptr; // Home, Detail, InfoMenu, Settings: sin red de por medio
-  }
-}
-
 void enterMode(Mode m) {
   Mode previous = currentMode;
+  if (previous != m) opsFor(previous).onExit();
+
   currentMode = m;
 
   // Radar y Mapa comparten el recuadro: pasar de uno al otro reusa los aviones
@@ -277,25 +476,57 @@ void enterMode(Mode m) {
     aircraft.clear();
   }
 
-  if (m == Mode::Radar)         radarScreen.onEnter(); // limpia y reinicia el barrido
-  else if (m == Mode::Map)      mapScreen.onEnter();   // fuerza el redibujo del mapa
-  else if (m == Mode::Settings) settingsScreen.onEnter();
+  opsFor(m).onEnter();
 
   if (!reusesData) {
-    // El fetch bloquea varios segundos. Sin este cartel la pantalla anterior
-    // queda congelada tal cual estaba y el toque parece no haber entrado.
-    const char* waiting = pendingFetchMessage(m);
-    if (waiting) display.showMessage(waiting);
+    // Antes aca iba un cartel de "Buscando aviones...", porque el fetch se
+    // llevaba puesto el loop varios segundos y sin el la pantalla anterior
+    // quedaba congelada y el toque parecia no haber entrado. Con la red en el
+    // core 0 la pantalla nueva se dibuja al instante y los datos entran cuando
+    // llegan; que todavia no esten lo dice la barra de estado ("sin datos").
     fetchForCurrentMode();
   }
 
   renderCurrentMode();
 }
 
+// Ciclo de refresco de la pantalla activa, segun de que se alimente.
+static void refreshDataFor(const ModeOps& ops) {
+  if (ops.needs == DataNeed::Aircraft) {
+    // Refresco adaptativo: mas rapido si hay trafico cerca de casa.
+    fastMode = (currentMode == Mode::Radar || currentMode == Mode::Map) &&
+               RadarScreen::hasNearbyTraffic(aircraft);
+    const uint32_t interval = fastMode ? REFRESH_FAST_MS : REFRESH_NORMAL_MS;
+
+    if (millis() - lastFetch >= interval) {
+      // Sin red, fetchForCurrentMode() vuelve enseguida y reprograma el intento
+      // para dentro de un intervalo. De reconectar se ocupa wifiTick().
+      fetchForCurrentMode();
+      renderCurrentMode();
+    }
+  } else if (ops.needs == DataNeed::News || ops.needs == DataNeed::Weather) {
+    // Noticias y clima no siguen el refresco adaptativo: cada cliente tiene su
+    // propio cache y su propio reintento (API_RETRY_MS). Se pide y nada mas; el
+    // redibujo lo dispara netTick() cuando los datos llegan.
+    const bool should = (ops.needs == DataNeed::News) ? newsClient.shouldRefresh()
+                                                      : weatherClient.shouldRefresh();
+    if (should && WiFi.status() == WL_CONNECTED && !netTask.busy()) {
+      fetchForCurrentMode();
+    }
+  }
+}
 void setup() {
   Serial.begin(115200);
   display.begin();
   display.setClock(&deviceClock); // la barra de estado muestra la hora
+
+  DataLock::begin();  // antes que la tarea de red: protege lo que se comparte
+  netTask.begin();
+
+  // Guardar la configuracion mientras hay un fetch en curso le cambiaria las
+  // credenciales a OpenSkyClient abajo de los pies, porque las relee de NVS en
+  // cada pedido de token. El handler espera a que la red termine.
+  webPortal.setNetBusyProbe([]() { return netTask.busy(); });
   touch.begin();      // corre el wizard de calibración la primera vez
   deviceConfig.begin(); // credenciales desde NVS
   mapTiles.begin();   // monta LittleFS con los mapas pre-renderizados
@@ -332,6 +563,9 @@ void setup() {
 }
 
 void loop() {
+  // Resultados de la tarea de red, si los hay. No bloquea.
+  netTick();
+
   // Estado de la red: reconecta si hace falta y levanta el dashboard la primera
   // vez que hay IP. Va antes de todos los "return" de abajo para que siga
   // corriendo aunque el banner esté activo o estemos en una pantalla sin red.
@@ -359,10 +593,9 @@ void loop() {
     return;
   }
 
-  // Terminó la animación: hay que repintar la pantalla que quedó abajo.
+  // Termino la animacion: hay que repintar la pantalla que quedo abajo.
   if (banner.takeRepaintRequest()) {
-    if (currentMode == Mode::Radar)    radarScreen.onEnter();
-    else if (currentMode == Mode::Map) mapScreen.onEnter();
+    opsFor(currentMode).onEnter();  // el radar reinicia el barrido, el mapa el fondo
     renderCurrentMode();
   }
 
@@ -371,172 +604,29 @@ void loop() {
   // llama en Home, que es la unica pantalla sin barra de estado.
   if (currentMode != Mode::Home) display.tickStatusClock();
 
+  // --- Router -------------------------------------------------------------
+  // Todo lo que antes eran siete ramas de if/else sale de la fila del modo
+  // activo. Ver MODE_OPS.
+  const ModeOps* ops = &opsFor(currentMode);
+
   uint16_t tx = 0, ty = 0;
-  bool tapped = touch.getTap(tx, ty);
-
-  // Ajustes: muestra red/IP, recalibra el touch y permite borrar la config de
-  // WiFi con dos toques.
-  if (currentMode == Mode::Settings) {
-    if (tapped) {
-      if (ty < DisplayManager::STATUS_BAR_HEIGHT) {
-        goHome();
-      } else {
-        SettingsAction action = settingsScreen.handleTap(tx, ty);
-        if (action == SettingsAction::ResetWifi) {
-          // Segundo toque confirmado: borrar y volver al portal
-          display.showMessage("Borrando WiFi...");
-          deviceConfig.clearWifi();
-          delay(700);
-          ESP.restart();
-        } else if (action == SettingsAction::Recalibrate) {
-          touch.recalibrate();  // bloquea hasta que toques las 3 cruces
-          renderCurrentMode();  // el wizard piso la pantalla entera
-        }
-      }
+  if (touch.getTap(tx, ty)) {
+    // La barra de arriba es "volver" en todas las pantallas menos Home, que no
+    // la tiene, y Detail, donde cualquier toque ya vuelve al origen.
+    if (ops->statusBarBack && ty < DisplayManager::STATUS_BAR_HEIGHT) {
+      enterMode(Mode::Home);
+    } else {
+      const Mode next = ops->handleTap(tx, ty);
+      if (next != currentMode) enterMode(next);
     }
-    settingsScreen.tick(); // vence la confirmación si el usuario se fue
-    delay(30);
-    return;
+
+    // enterMode() puede haber cambiado de pantalla: lo que queda de la vuelta
+    // le toca a la que quedo activa, no a la que recibio el toque.
+    ops = &opsFor(currentMode);
   }
 
-  if (currentMode == Mode::Home) {
-    if (tapped) {
-      HomeChoice choice = homeScreen.hitTest(tx, ty);
-      if (choice == HomeChoice::Radar) {
-        enterMode(Mode::Radar);
-      } else if (choice == HomeChoice::Airports) {
-        currentAirportIdx = 0;
-        enterMode(Mode::Airports);
-      } else if (choice == HomeChoice::Map) {
-        enterMode(Mode::Map);
-      } else if (choice == HomeChoice::Info) {
-        enterMode(Mode::InfoMenu);
-      } else if (choice == HomeChoice::Settings) {
-        enterMode(Mode::Settings);
-      }
-    }
-    delay(30);
-    return;
-  }
+  ops->tick();          // animacion (el barrido del radar) o vencimientos
+  refreshDataFor(*ops); // ciclo de refresco segun de que se alimente
 
-  // Submenu "MAS INFO": elige entre noticias y clima, o vuelve a Home tocando
-  // la barra superior (misma convencion que el resto de las pantallas).
-  if (currentMode == Mode::InfoMenu) {
-    if (tapped) {
-      if (ty < DisplayManager::STATUS_BAR_HEIGHT) {
-        goHome();
-      } else {
-        InfoChoice choice = infoMenuScreen.hitTest(tx, ty);
-        if (choice == InfoChoice::News) {
-          enterMode(Mode::News);
-        } else if (choice == InfoChoice::Weather) {
-          enterMode(Mode::Weather);
-        }
-      }
-    }
-    delay(30);
-    return;
-  }
-
-  // En Detail: cualquier toque vuelve a la pantalla de origen (radar o mapa).
-  // La ficha queda congelada (no se refresca sola) para leerla con tranquilidad.
-  if (currentMode == Mode::Detail) {
-    if (tapped) {
-      currentMode = detailReturnMode;
-      // Volvemos desde el Detail: la pantalla de origen quedó tapada por la
-      // ficha, así que hay que repintarla entera.
-      if (currentMode == Mode::Radar)    radarScreen.onEnter();
-      else if (currentMode == Mode::Map) mapScreen.onEnter();
-      renderCurrentMode();
-    }
-    delay(30);
-    return;
-  }
-
-  // En Radar/Aeropuertos/Mapa/Noticias/Clima: tocar la franja superior
-  // (barra de estado) vuelve a Home
-  if (tapped && ty < DisplayManager::STATUS_BAR_HEIGHT) {
-    goHome();
-    delay(30);
-    return;
-  }
-
-  // Noticias y clima no dependen del refresco adaptativo de OpenSky: cada
-  // cliente tiene su propio cache y solo redibujamos cuando trajo datos nuevos.
-  if (currentMode == Mode::News || currentMode == Mode::Weather) {
-    bool shouldFetch = (currentMode == Mode::News) ? newsClient.shouldRefresh()
-                                                   : weatherClient.shouldRefresh();
-    // Sin red no se intenta nada acá: wifiTick() ya reconecta en segundo plano
-    // y cada cliente tiene su propio reintento (API_RETRY_MS). Antes esta rama
-    // necesitaba un throttle a mano para que el connectWiFi() bloqueante no
-    // dejara la pantalla congelada; ahora no bloquea nadie y sobra.
-    if (shouldFetch && WiFi.status() == WL_CONNECTED) {
-      fetchForCurrentMode();
-      renderCurrentMode();
-    }
-    delay(30);
-    return;
-  }
-
-  // En Radar o Mapa: tocar un avión abre su ficha de detalle
-  if (tapped && (currentMode == Mode::Radar || currentMode == Mode::Map)) {
-    const AircraftState* hit = (currentMode == Mode::Radar)
-                                 ? radarScreen.hitTest(tx, ty)
-                                 : mapScreen.hitTest(tx, ty);
-    if (hit) {
-      selectedAircraft = *hit; // copia: sobrevive al próximo fetch
-      detailReturnMode = currentMode;
-      currentMode = Mode::Detail;
-      renderCurrentMode();
-      delay(30);
-      return;
-    }
-  }
-
-  // En Mapa: el botón inferior alterna entre 80 km y 40 km. No pide datos
-  // nuevos: los dos zooms son recortes de la misma zona ya descargada.
-  if (tapped && currentMode == Mode::Map && mapScreen.zoomButtonRect().contains(tx, ty)) {
-    mapScreen.toggleZoom();
-    renderCurrentMode();
-    delay(30);
-    return;
-  }
-
-  // En Aeropuertos: tocar el botón inferior rota al siguiente aeropuerto
-  if (tapped && currentMode == Mode::Airports && airportScreen.nextButtonRect().contains(tx, ty)) {
-    currentAirportIdx = (currentAirportIdx + 1) % AIRPORT_COUNT;
-    lastFetch = 0;
-    // Mismo motivo que en enterMode(): el fetch bloquea y sin cartel el boton
-    // parece no haber respondido.
-    const char* waiting = pendingFetchMessage(Mode::Airports);
-    if (waiting) display.showMessage(waiting);
-    fetchForCurrentMode();
-    renderCurrentMode();
-    delay(30);
-    return;
-  }
-
-  // Refresco adaptativo: más rápido si hay tráfico cerca de casa. Vale para
-  // Radar y Mapa por igual, que ahora miran la misma zona.
-  fastMode = (currentMode == Mode::Radar || currentMode == Mode::Map) &&
-             RadarScreen::hasNearbyTraffic(aircraft);
-  uint32_t interval = fastMode ? REFRESH_FAST_MS : REFRESH_NORMAL_MS;
-
-  if (millis() - lastFetch >= interval) {
-    // Sin red, fetchForCurrentMode() vuelve enseguida y reprograma el intento
-    // para dentro de un intervalo. De reconectar se ocupa wifiTick().
-    fetchForCurrentMode();
-    renderCurrentMode();
-  }
-
-  // Barrido del radar: gira solo, sin depender del ciclo de fetch. tick()
-  // vuelve enseguida si todavía no toca frame, así que no le roba latencia
-  // al polling del touch.
-  if (currentMode == Mode::Radar) {
-    radarScreen.tick();
-    delay(RADAR_LOOP_DELAY_MS);
-    return;
-  }
-
-  delay(30); // polling suave del touch
+  delay(ops->loopDelayMs);
 }

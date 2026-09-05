@@ -1,5 +1,6 @@
 #include "services/WeatherClient.h"
 #include "config.h"
+#include "core/DataLock.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -121,10 +122,15 @@ bool WeatherClient::refresh() {
   String t = cur["time"].as<String>();
   w.observedAt = (t.length() >= 16) ? t.substring(11, 16) : String("");
 
-  _now = w;
-  _ok = true;
+  // Publicacion bajo el candado: esto corre en la tarea de red y el loop puede
+  // estar dibujando la pantalla del clima justo ahora (ver NewsClient).
+  {
+    DataLock::Guard g;
+    _now = w;
+    _ok = true;
+    _lastError = "";
+  }
   _lastOkMs = millis();
-  _lastError = "";
   Serial.printf("[Clima] %.1f C, codigo WMO %d\n", w.tempC, w.wmoCode);
   return true;
 }

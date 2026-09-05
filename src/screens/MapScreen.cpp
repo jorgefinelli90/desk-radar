@@ -254,7 +254,7 @@ void MapScreen::render(std::vector<AircraftState>& aircraft,
   // Solo uno: a 240 px de ancho, diez etiquetas de 8 caracteres se pisan entre
   // sí y tapan el mapa. El resto se consulta tocando el avión.
   if (closest) {
-    String cs = closest->callsign.length() ? closest->callsign : closest->icao24;
+    const char* cs = closest->label();
     int tw = tft.textWidth(cs, 1) + 4;
     int tx = closestX + 10;
     int ty = closestY - 4;

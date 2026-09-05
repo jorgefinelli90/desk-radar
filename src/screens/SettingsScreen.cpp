@@ -75,9 +75,9 @@ void SettingsScreen::drawResetButton() {
     tft.setTextColor(TFT_YELLOW, fill);
     tft.drawString("se reinicia en modo AP", r.x + r.w / 2, r.y + r.h / 2 + 12, 1);
   } else {
-    tft.drawString("Reiniciar config WiFi", r.x + r.w / 2, r.y + r.h / 2 - 7, 2);
+    tft.drawString("Reiniciar configuracion", r.x + r.w / 2, r.y + r.h / 2 - 7, 2);
     tft.setTextColor(TFT_PINK, fill);
-    tft.drawString("pide confirmacion", r.x + r.w / 2, r.y + r.h / 2 + 12, 1);
+    tft.drawString("borra WiFi y PIN del panel", r.x + r.w / 2, r.y + r.h / 2 + 12, 1);
   }
 }
 

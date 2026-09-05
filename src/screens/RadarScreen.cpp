@@ -142,6 +142,26 @@ void RadarScreen::onEnter() {
 #endif
 }
 
+void RadarScreen::onExit() {
+  if (_discReady) {
+    _disc.deleteSprite();
+    _discReady = false;
+  }
+  if (_mapRam) {
+    free(_mapRam);
+    _mapRam = nullptr;
+  }
+  _mapReady = false;
+
+  // Para que ensureDisc() vuelva a asignar la proxima vez. La paleta y la
+  // posicion de El Palomar se recalculan ahi mismo: son cuentas, no memoria.
+  _triedInit = false;
+  _chromeValid = false;
+
+  Serial.printf("[Radar] Sprite y mapa liberados, heap libre %u, bloque mayor %u\n",
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+}
+
 // Asigna el sprite del disco la primera vez. A 4 bpp son (200*200)/2 = 20 KB.
 // Un sprite de 16 bpp del mismo tamaño costaría 80 KB, demasiado para convivir
 // con el handshake TLS de OpenSky. Si la asignación falla igual seguimos
@@ -222,7 +242,7 @@ void RadarScreen::drawPanel(const AircraftState* closest, int shown) {
   tft.setTextDatum(TL_DATUM);
 
   if (closest) {
-    String cs = closest->callsign.length() ? closest->callsign : closest->icao24;
+    const char* cs = closest->label();
     bool near = closest->distanceKm <= RADAR_NEAR_KM;
 
     tft.setTextColor(near ? TFT_RED : TFT_GREENYELLOW, TFT_BLACK);
@@ -267,9 +287,9 @@ void RadarScreen::render(std::vector<AircraftState>& aircraft,
 
   // Conservamos los pings ya disparados para que un refresco de datos no corte
   // el destello a mitad de camino.
-  auto previousPing = [&](const String& icao) -> uint32_t {
+  auto previousPing = [&](const char* icao) -> uint32_t {
     for (const auto& old : _blips) {
-      if (old.base.aircraft.icao24 == icao) return old.pingMs;
+      if (strcmp(old.base.aircraft.icao24, icao) == 0) return old.pingMs;
     }
     return 0;
   };

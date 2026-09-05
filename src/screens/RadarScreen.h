@@ -16,6 +16,17 @@ class RadarScreen {
     // Reinicia el barrido y marca el marco fijo como "hay que redibujarlo".
     void onEnter();
 
+    // Llamar al salir. Suelta el sprite del disco (20 KB) y la copia del mapa
+    // de fondo (otros 20 KB), que hasta ahora se reservaban la primera vez y no
+    // se liberaban nunca, ni estando en Clima. Son los mismos 40 KB que compiten
+    // con el pico del handshake TLS y con el stack de la tarea de red, y encima
+    // se piden CONTIGUOS, que es lo primero que escasea cuando el heap se
+    // fragmenta.
+    //
+    // Volver a entrar cuesta releer 20 KB de LittleFS: imperceptible al lado del
+    // fetch que igual se dispara al entrar.
+    void onExit();
+
     // Dibuja el radar completo con la lista de aviones ya calculada
     // (distanceKm y bearingDeg deben estar llenos).
     void render(std::vector<AircraftState>& aircraft,

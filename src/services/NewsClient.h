@@ -6,6 +6,7 @@ struct NewsItem {
   String title;   // ya pasado a ASCII, listo para dibujar
   String source;  // nombre del medio
   String time;    // "HH:MM" hora local de Argentina, o "" si no vino
+  String summary; // el "description" de GNews: una o dos frases de resumen
 };
 
 // Trae los titulares más recientes de Argentina desde GNews.io y los mantiene

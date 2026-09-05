@@ -18,6 +18,8 @@
 #include <unity.h>
 
 #include "utils/TextUtils.h"
+#include "utils/StrUtils.h"
+#include "services/OpenSkyClient.h"
 
 // Sin init(): textWidth() resuelve por tablas de ancho de la fuente y no toca
 // el bus SPI, asi que estos tests corren aunque no haya pantalla conectada.
@@ -189,6 +191,90 @@ void test_se_respeta_el_tope_de_renglones(void) {
       "lo que no entra tiene que quedar marcado con ...");
 }
 
+// --- StrUtils::copyTrimmed --------------------------------------------------
+// Es lo que llena los campos de AircraftState, que desde ARQ-3 son char fijos y
+// no String. Un desborde acá no da una excepción: pisa el campo de al lado del
+// struct y aparece como datos corruptos en cualquier otra parte.
+
+void test_copia_normal_sin_espacios(void) {
+  char dst[9];
+  StrUtils::copyTrimmed("AAL123", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("AAL123", dst);
+}
+
+// El caso real: OpenSky rellena el callsign a 8 caracteres con espacios.
+void test_se_recorta_el_relleno_de_opensky(void) {
+  char dst[9];
+  StrUtils::copyTrimmed("AAL123  ", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("AAL123", dst);
+
+  StrUtils::copyTrimmed("  ARG1234", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("ARG1234", dst);
+
+  StrUtils::copyTrimmed("   LAN99  ", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("LAN99", dst);
+}
+
+// Un callsign de 8 caracteres tiene que entrar entero en char[9].
+void test_el_callsign_mas_largo_entra_justo(void) {
+  char dst[9];
+  StrUtils::copyTrimmed("ABCDEFGH", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("ABCDEFGH", dst);
+  TEST_ASSERT_EQUAL_INT(8, (int)strlen(dst));
+}
+
+// Lo que no entra se corta, nunca se desborda. El centinela de atrás detecta
+// una escritura fuera de rango.
+void test_lo_que_no_entra_se_corta(void) {
+  struct { char dst[7]; char centinela[4]; } b;
+  memcpy(b.centinela, "\xAA\xAA\xAA\xAA", 4);
+
+  StrUtils::copyTrimmed("ABCDEFGHIJKLMNOP", b.dst, sizeof(b.dst));
+
+  TEST_ASSERT_EQUAL_STRING("ABCDEF", b.dst);
+  TEST_ASSERT_EQUAL_INT(6, (int)strlen(b.dst));
+  TEST_ASSERT_EQUAL_MEMORY("\xAA\xAA\xAA\xAA", b.centinela, 4);
+}
+
+void test_entrada_vacia_nula_o_toda_espacios(void) {
+  char dst[9];
+  StrUtils::copyTrimmed("", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("", dst);
+
+  StrUtils::copyTrimmed(nullptr, dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("", dst);
+
+  StrUtils::copyTrimmed("     ", dst, sizeof(dst));
+  TEST_ASSERT_EQUAL_STRING("", dst);
+}
+
+// --- AircraftState::label ---------------------------------------------------
+// Cuatro pantallas mostraban "callsign, y si no ICAO24" con la misma cuenta a
+// mano; ahora la hace el struct.
+
+void test_la_etiqueta_prefiere_el_callsign(void) {
+  AircraftState a;
+  StrUtils::copyTrimmed("E49406", a.icao24, sizeof(a.icao24));
+  StrUtils::copyTrimmed("ARG1234", a.callsign, sizeof(a.callsign));
+  TEST_ASSERT_EQUAL_STRING("ARG1234", a.label());
+}
+
+// Muchos aviones vienen sin callsign; ahí tiene que caer al ICAO24, que siempre
+// está, en vez de dibujar un hueco.
+void test_sin_callsign_la_etiqueta_es_el_icao(void) {
+  AircraftState a;
+  StrUtils::copyTrimmed("E49406", a.icao24, sizeof(a.icao24));
+  StrUtils::copyTrimmed("   ", a.callsign, sizeof(a.callsign)); // solo relleno
+  TEST_ASSERT_EQUAL_STRING("E49406", a.label());
+}
+
+// Un AircraftState recién declarado se lee sin explotar: los char van
+// inicializados a cero en el struct justamente para esto.
+void test_un_avion_recien_declarado_no_tiene_basura(void) {
+  AircraftState a;
+  TEST_ASSERT_EQUAL_STRING("", a.label());
+}
+
 void setup() {
   delay(2000);
   UNITY_BEGIN();
@@ -217,6 +303,16 @@ void setup() {
   RUN_TEST(test_ningun_renglon_se_pasa_del_ancho);
   RUN_TEST(test_una_palabra_mas_larga_que_el_renglon);
   RUN_TEST(test_se_respeta_el_tope_de_renglones);
+
+  RUN_TEST(test_copia_normal_sin_espacios);
+  RUN_TEST(test_se_recorta_el_relleno_de_opensky);
+  RUN_TEST(test_el_callsign_mas_largo_entra_justo);
+  RUN_TEST(test_lo_que_no_entra_se_corta);
+  RUN_TEST(test_entrada_vacia_nula_o_toda_espacios);
+
+  RUN_TEST(test_la_etiqueta_prefiere_el_callsign);
+  RUN_TEST(test_sin_callsign_la_etiqueta_es_el_icao);
+  RUN_TEST(test_un_avion_recien_declarado_no_tiene_basura);
 
   UNITY_END();
 }

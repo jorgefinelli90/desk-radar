@@ -4,6 +4,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "utils/StrUtils.h"
 
 bool OpenSkyClient::ensureToken() {
   // Renueva con 60s de margen antes de que expire.
@@ -155,9 +156,10 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
 
   for (JsonArray s : states) {
     AircraftState a;
-    a.icao24   = s[0].as<String>();
-    a.callsign = s[1].is<const char*>() ? String(s[1].as<const char*>()) : String("");
-    a.callsign.trim();
+    StrUtils::copyTrimmed(s[0].is<const char*>() ? s[0].as<const char*>() : nullptr,
+                a.icao24, sizeof(a.icao24));
+    StrUtils::copyTrimmed(s[1].is<const char*>() ? s[1].as<const char*>() : nullptr,
+                a.callsign, sizeof(a.callsign));
     a.lon           = s[5] | 0.0;
     a.lat           = s[6] | 0.0;
     a.baroAltitudeM = s[7] | 0.0;

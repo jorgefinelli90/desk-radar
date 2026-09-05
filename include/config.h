@@ -181,6 +181,11 @@ static const uint32_t WIFI_RETRY_MS = 15000;
 // Hostname de mDNS: el dispositivo queda en http://desk-radar.local/
 #define DEVICE_HOSTNAME   "desk-radar"
 
+// Usuario del panel web. La contraseña es el PIN que se carga desde el propio
+// panel (campo "PIN del panel web"): mientras esté vacío, el panel queda
+// abierto a toda la red y la página de estado lo avisa.
+static const char* WEB_AUTH_USER = "admin";
+
 // --- Banner de mensajes ---
 // Tiempos de la animación del banner que aparece cuando llega un mensaje por
 // POST /api/message.

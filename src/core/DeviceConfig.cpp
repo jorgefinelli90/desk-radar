@@ -29,6 +29,7 @@ static const DeviceConfig::Field CONFIG_FIELDS[] = {
   { "os_id",     "osid",  "OpenSky Client ID",     "opensky-network.org -> My OpenSky -> API Client", false, false },
   { "os_secret", "ossec", "OpenSky Client Secret", "",                               true,  false },
   { "gnews_key", "gnews", "GNews API key",         "gnews.io/register (gratis, sin tarjeta)", true, false },
+  { "web_pin",   "pin",   "PIN del panel web",     "Usuario: admin. Vacio = panel abierto a toda la red. Escribi off para quitarlo.", true, false },
 };
 static const int CONFIG_FIELD_COUNT =
     sizeof(CONFIG_FIELDS) / sizeof(CONFIG_FIELDS[0]);
@@ -77,7 +78,7 @@ void DeviceConfig::begin() {
   // dispositivo.
   //
   // El marcador "seeded" no es un detalle: sin él, "Reiniciar config WiFi"
-  // quedaria roto en cualquier equipo que tenga secrets.h. clearWifi() deja el
+  // quedaria roto en cualquier equipo que tenga secrets.h. clearAccess() deja el
   // SSID vacio, y en el proximo arranque la precarga lo volveria a llenar, asi
   // que el reset se desharia solo y en silencio.
   bool seeded = false;
@@ -135,9 +136,10 @@ void DeviceConfig::save() {
   Serial.println("[Config] Guardado en NVS");
 }
 
-void DeviceConfig::clearWifi() {
+void DeviceConfig::clearAccess() {
   set("ssid", "");
   set("pass", "");
+  set("pin", "");  // ver el comentario del header: unica via de recuperacion
   save();
-  Serial.println("[Config] Credenciales WiFi borradas: al reiniciar arranca en modo AP");
+  Serial.println("[Config] WiFi y PIN del panel borrados: al reiniciar arranca en modo AP");
 }

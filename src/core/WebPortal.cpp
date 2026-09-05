@@ -129,8 +129,39 @@ String WebPortal::uptimeText() const {
   return String(buf);
 }
 
+// --- Autenticacion ----------------------------------------------------------
+// Hasta ahora el dashboard no le pedia nada a nadie: cualquiera en la red podia
+// abrir /config y leer el SSID y el OpenSky Client ID, sobrescribir las
+// credenciales (lo que fuerza un reinicio) y mandar mensajes a la pantalla. Los
+// secretos ya estaban bien tratados -nunca se devuelven al navegador- pero eso
+// protege del que mira, no del que escribe.
+//
+// El PIN es opcional a proposito: si esta vacio el panel queda abierto y la
+// pagina de estado lo avisa en grande. Obligarlo habria roto el flujo de quien
+// ya lo tiene andando, y en una red domestica es una decision razonable de
+// tomar informado.
+bool WebPortal::requireAuth() {
+  // En modo AP no se pide nada: es la primera configuracion, el PIN todavia no
+  // existe y pedirlo dejaria al usuario afuera de su propio dispositivo.
+  if (_apMode) return true;
+
+  const String& pin = _cfg.get("pin");
+  if (pin.length() == 0) return true;
+
+  if (_server.authenticate(WEB_AUTH_USER, pin.c_str())) return true;
+
+  // DIGEST y no BASIC: esto viaja por HTTP plano, y con Basic el PIN va en cada
+  // request en base64, que es texto legible para cualquiera que mire la red.
+  // Con Digest lo que viaja es un hash con nonce.
+  _server.requestAuthentication(DIGEST_AUTH, "desk-radar",
+                                "PIN incorrecto. Recarga para reintentar.");
+  return false;
+}
+
 // --- Rutas -----------------------------------------------------------------
 void WebPortal::handleRoot() {
+  if (!requireAuth()) return;
+
   if (_apMode) {
     // En modo AP la raíz ES el formulario: el celular abre el portal cautivo y
     // tiene que caer directo en lo que hay que completar.
@@ -143,7 +174,21 @@ void WebPortal::handleRoot() {
     return;
   }
 
-  String body = "<div class=\"card\"><table>";
+  String body;
+
+  // Si no hay PIN, el panel esta abierto: mejor que se vea arriba de todo y no
+  // que se descubra.
+  if (_cfg.get("pin").length() == 0) {
+    body += "<div class=\"card\" style=\"border-color:#7a4a1a;background:#241a10\">"
+            "<b style=\"color:#f0a44b\">El panel esta abierto</b>"
+            "<div class=\"hint\" style=\"margin-top:6px\">Cualquiera conectado a esta red "
+            "puede ver esta pagina, cambiar la configuracion y mandar mensajes a la "
+            "pantalla. Pone un PIN en "
+            "<a href=\"/config\" style=\"color:#4a9eff\">Configuracion</a> para pedir "
+            "usuario y clave.</div></div>";
+  }
+
+  body += "<div class=\"card\"><table>";
   body += "<tr><td>Red WiFi</td><td>" + esc(WiFi.SSID()) + "</td></tr>";
   body += "<tr><td>IP local</td><td>" + WiFi.localIP().toString() + "</td></tr>";
   body += "<tr><td>Direccion</td><td>http://" + _hostname + ".local/</td></tr>";
@@ -160,12 +205,21 @@ void WebPortal::handleRoot() {
   body += "</td></tr>";
 
   body += "<tr><td>Heap libre</td><td>" + String(ESP.getFreeHeap() / 1024) + " KB</td></tr>";
+
+  // El bloque contiguo mas grande es la medida real de fragmentacion: el heap
+  // puede tener 150 KB libres repartidos en pedacitos y no poder darte los
+  // 20 KB seguidos que necesita el sprite del radar, ni los 10 KB de stack de
+  // la tarea de red. Si este numero baja con las horas, algo esta fragmentando.
+  body += "<tr><td>Bloque contiguo mayor</td><td>" +
+          String(ESP.getMaxAllocHeap() / 1024) + " KB</td></tr>";
   body += "</table></div>";
 
   _server.send(200, "text/html", pageShell("Estado del dispositivo", body));
 }
 
 void WebPortal::handleConfigForm() {
+  if (!requireAuth()) return;
+
   String body =
     "<div class=\"card\"><div class=\"hint\">Los campos de tipo contrasena se "
     "guardan pero no se muestran. Dejalos vacios para no cambiarlos.</div></div>";
@@ -174,6 +228,17 @@ void WebPortal::handleConfigForm() {
 }
 
 void WebPortal::handleConfigSave() {
+  if (!requireAuth()) return;
+
+  // Esperamos a que la tarea de red termine lo que este haciendo: ver el
+  // comentario de setNetBusyProbe(). Son unos pocos segundos como mucho, y este
+  // handler ya viene de un submit del navegador, asi que no hay nada animandose
+  // del otro lado que se pueda trabar.
+  if (_busyProbe) {
+    uint32_t t0 = millis();
+    while (_busyProbe() && millis() - t0 < 20000) delay(20);
+  }
+
   bool wifiChanged = false;
 
   for (int i = 0; i < DeviceConfig::fieldCount(); i++) {
@@ -186,6 +251,12 @@ void WebPortal::handleConfigSave() {
     // Un secreto vacío significa "dejalo como está", no "borralo": el navegador
     // nunca recibió el valor, así que un submit sin tocarlo llega vacío.
     if (f.secret && v.length() == 0) continue;
+
+    // ...y por eso mismo un campo secreto no se puede vaciar desde el
+    // formulario. Para el PIN hace falta poder: sin una salida explicita, una
+    // vez puesto no habria forma de volver a dejar el panel abierto. La otra
+    // via es el boton de Ajustes en la pantalla, que ademas borra el WiFi.
+    if (strcmp(f.name, "pin") == 0 && v.equalsIgnoreCase("off")) v = "";
 
     if (v != _cfg.get(f.name)) {
       if (f.wifi) wifiChanged = true;
@@ -216,6 +287,8 @@ void WebPortal::handleConfigSave() {
 }
 
 void WebPortal::handleMessageForm() {
+  if (!requireAuth()) return;
+
   String body =
     "<form id=\"f\"><div class=\"card\">"
     "<label>Mensaje para la pantalla</label>"
@@ -243,6 +316,8 @@ void WebPortal::handleMessageForm() {
 }
 
 void WebPortal::handleMessagePost() {
+  if (!requireAuth()) return;
+
   String text;
   if (_server.hasArg("text"))      text = _server.arg("text");
   else if (_server.hasArg("plain")) text = _server.arg("plain"); // curl --data-binary

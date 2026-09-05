@@ -35,6 +35,14 @@ class WebPortal {
     // Llamar en cada vuelta del loop. No bloquea.
     void tick();
 
+    // Sonda opcional para saber si la tarea de red esta ocupada. Se usa antes
+    // de guardar la configuracion: OpenSkyClient relee las credenciales de NVS
+    // en cada pedido de token, asi que reescribirlas en mitad de un fetch le
+    // cambiaria el String abajo de los pies. Un lambda sin captura convierte
+    // solo a este tipo.
+    typedef bool (*BusyProbe)();
+    void setNetBusyProbe(BusyProbe probe) { _busyProbe = probe; }
+
     // true si startDashboard() ya corrio. Lo mira wifiTick() en main: el
     // dashboard se levanta cuando aparece la IP, que puede ser al arrancar o
     // un rato despues, y no se puede levantar dos veces.
@@ -61,6 +69,8 @@ class WebPortal {
     WebServer       _server{80};
     DNSServer       _dns;
 
+    BusyProbe _busyProbe = nullptr;
+
     bool     _apMode = false;
     bool     _dashboardUp = false;
     String   _hostname;
@@ -73,6 +83,11 @@ class WebPortal {
 
     void registerRoutes();
     void registerCaptiveDetection();
+
+    // Puerta de entrada de todos los handlers del dashboard. Devuelve true si la
+    // request puede seguir; si devuelve false ya mando el 401 y el handler tiene
+    // que salir sin escribir nada mas.
+    bool requireAuth();
 
     void handleRoot();
     void handleConfigForm();

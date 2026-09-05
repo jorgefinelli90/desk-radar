@@ -13,7 +13,7 @@ void DetailScreen::render(const AircraftState& a) {
 
   _display.showStatusBar("< VOLVER", "");
 
-  String cs = a.callsign.length() ? a.callsign : a.icao24;
+  const char* cs = a.label();
 
   // Encabezado con el callsign bien grande
   tft.setTextDatum(MC_DATUM);
@@ -21,7 +21,7 @@ void DetailScreen::render(const AircraftState& a) {
   tft.drawString(cs, tft.width() / 2, 46, 4);
 
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("ICAO24  " + a.icao24, tft.width() / 2, 70, 1);
+  tft.drawString(String("ICAO24  ") + a.icao24, tft.width() / 2, 70, 1);
 
   tft.drawFastHLine(10, 86, tft.width() - 20, TFT_DARKGREEN);
 

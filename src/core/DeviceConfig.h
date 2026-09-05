@@ -34,8 +34,15 @@ class DeviceConfig {
 
     bool hasWifi() const;
 
-    // Borra SSID y contraseña y deja el resto. Al reiniciar arranca en modo AP.
-    void clearWifi();
+    // Borra SSID, contraseña y PIN del panel, y deja el resto (las API keys
+    // sobreviven). Al reiniciar arranca en modo AP.
+    //
+    // El PIN va acá y no en un botón aparte porque esta es la única vía de
+    // recuperación si te lo olvidás: exige estar parado frente al aparato y
+    // confirmar con dos toques, que es prueba suficiente de que el dispositivo
+    // es tuyo. Sin esto, un PIN olvidado dejaba el panel inaccesible para
+    // siempre salvo reflasheando la NVS.
+    void clearAccess();
 
     static int fieldCount();
     static const Field& field(int i);
