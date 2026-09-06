@@ -59,8 +59,11 @@ bool WeatherClient::refresh() {
   _everTried = true;
   _lastTryMs = millis();
 
+  // Valida contra el root de Let's Encrypt (TLS_ROOT_CA_PEM en config.h). Esta
+  // API no pide credenciales, pero sigue siendo la unica garantia de que la
+  // respuesta viene de Open-Meteo y no de un tercero en el WiFi.
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setCACert(TLS_ROOT_CA_PEM);
 
   HTTPClient http;
   char url[320];

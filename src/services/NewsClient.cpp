@@ -43,8 +43,10 @@ bool NewsClient::refresh() {
     return false;
   }
 
+  // Valida contra el root de Let's Encrypt (TLS_ROOT_CA_PEM en config.h). Por
+  // aca pasa la API key de GNews.
   WiFiClientSecure client;
-  client.setInsecure(); // MVP: sin validar certificado, igual que OpenSkyClient
+  client.setCACert(TLS_ROOT_CA_PEM);
 
   HTTPClient http;
   char url[320];

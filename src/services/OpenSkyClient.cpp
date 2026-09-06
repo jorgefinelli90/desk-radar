@@ -24,8 +24,12 @@ bool OpenSkyClient::ensureToken() {
 }
 
 bool OpenSkyClient::requestNewToken() {
+  // Valida contra el root de Let's Encrypt (ver TLS_ROOT_CA_PEM en config.h):
+  // ya no es MVP. setInsecure() aceptaba cualquier certificado, que es lo mismo
+  // que no tener TLS: alguien en el medio del WiFi podia hacerse pasar por
+  // OpenSky y quedarse con el client secret.
   WiFiClientSecure client;
-  client.setInsecure(); // MVP: sin validar certificado. Ver README para pinning/CA.
+  client.setCACert(TLS_ROOT_CA_PEM);
 
   HTTPClient http;
   if (!http.begin(client, OPENSKY_TOKEN_URL)) {
@@ -117,7 +121,7 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
   }
 
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setCACert(TLS_ROOT_CA_PEM);
 
   HTTPClient http;
   char url[256];

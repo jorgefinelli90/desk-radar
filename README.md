@@ -877,6 +877,47 @@ pegue un tirón.
 Para medir esto en tu placa, poné `RADAR_DEBUG_TIMING` en 1 en `config.h`: cada
 2 s salen por serie los fps reales, el costo del frame y los grados por frame.
 
+### TLS validado, sin bundle de CAs
+
+Los tres clientes HTTPS (OpenSky, GNews, Open-Meteo) usaban
+`client.setInsecure()`, que acepta cualquier certificado — es lo mismo que no
+tener TLS: alguien en el medio del WiFi podía hacerse pasar por cualquiera de
+los tres y quedarse con el client secret de OpenSky o la API key de GNews.
+Estaba bloqueado hasta que hubo NTP (validar una cadena de certificados
+necesita saber qué día es); con el reloj ya andando, se cerró.
+
+Se descartó armar un bundle completo de CAs (el que usan los navegadores):
+`arduino_esp_crt_bundle_attach` existe en el framework, pero el binario del
+bundle en sí no viene incluido — hay que generarlo aparte con una herramienta
+de ESP-IDF, y agregaría varias decenas de KB justo cuando la flash ya está al
+76 % de un slot OTA. En su lugar se **pinea el root CA** que comparten los tres
+hosts:
+
+```cpp
+static const char* TLS_ROOT_CA_PEM = R"CERT(
+-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+)CERT";
+```
+
+Los cuatro hosts (`opensky-network.org`, `auth.opensky-network.org`, `gnews.io`,
+`api.open-meteo.com`) terminan en el mismo root: **ISRG Root X1**, de Let's
+Encrypt. Se pinea el **root** y no un certificado de hoja ni un intermedio a
+propósito: los de hoja rotan cada ~90 días y los intermedios de tanto en tanto,
+pero el root tiene vigencia hasta 2035 — con eso alcanza para no tener que
+tocar esto de nuevo.
+
+El PEM se extrajo de un almacén de confianza **local** (el bundle de CAs que
+trae Git para Windows), no de una conexión en vivo a los hosts: confiar en lo
+que devuelve una conexión hecha desde un entorno de desarrollo en la nube
+sería darle la razón a un posible intermediario en el camino, justo lo que
+esto viene a evitar. Se confirmó funcionando en la práctica, con el
+dispositivo en su red real: los tres servicios respondieron con el
+certificado validado (`[OpenSky] Token renovado OK`, `[News] N titulares
+actualizados`, `[Clima] N.N C, código WMO N`, todos sin ningún error de
+handshake).
+
 ### ⚠️ Leer el body con `getString()`, nunca con `getStream()`
 
 Las tres APIs (OpenSky, GNews y Open-Meteo) responden con
