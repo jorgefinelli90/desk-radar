@@ -192,8 +192,17 @@ static const uint32_t ISS_CACHE_MS = 10UL * 1000UL; // 10 s
 // "traza" no es mas que pedir varios puntos alrededor de ahora. A diferencia
 // de la posicion puntual, la forma de la orbita casi no cambia en minutos (la
 // Tierra rota ~1.25 grados cada 5 min), asi que se pide mucho menos seguido.
-static const int      ISS_TRACK_HALF     = 9;                  // puntos a cada lado de "ahora"
-static const uint32_t ISS_TRACK_STEP_S   = 300;                // 5 min entre puntos (~45 min a cada lado)
+//
+// La ventana es de +-20 min (no +-45): la ISS cruza el ecuador cada ~46 min,
+// asi que 45 min a cada lado mostraba casi media vuelta completa -incluido el
+// giro entero cerca de la latitud maxima, donde el rumbo sobre el mapa se
+// pliega sobre si mismo- y en un mapa de 220px de ancho eso se veia como un
+// gancho confuso en vez de una curva legible. 20 min a cada lado (~22% de la
+// orbita) es real y sigue siendo una curva de verdad, pero rara vez llega a
+// ese pliegue. 12 puntos a cada lado (cada 100s) le dan mas resolucion a esa
+// curva mas corta que los 9 puntos de antes a la ventana vieja.
+static const int      ISS_TRACK_HALF     = 12;                 // puntos a cada lado de "ahora"
+static const uint32_t ISS_TRACK_STEP_S   = 100;                // ~1m40s entre puntos (~20 min a cada lado)
 static const uint32_t ISS_TRACK_CACHE_MS = 5UL * 60UL * 1000UL; // 5 min
 
 // Si una request falla, esperamos esto antes de reintentar (no martillar la API)

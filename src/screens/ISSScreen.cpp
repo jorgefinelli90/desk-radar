@@ -80,15 +80,20 @@ void ISSScreen::render(const ISSClient& iss) {
   // drawWideLine (no drawLine) porque un trazo de 1px de un color parecido al
   // oceano quedaba invisible en la práctica: se probó en la placa real con
   // TFT_DARKCYAN y a simple vista, sobre TFT_NAVY, no se distinguia. Con
-  // TFT_CYAN (bien mas claro que el oceano) y 1.6px de ancho se ve incluso
-  // sobre tierra.
-  static const float TRACK_WIDTH = 1.6f;
+  // TFT_CYAN (bien mas claro que el oceano) y 2px de ancho se ve incluso
+  // sobre tierra. Ademas se marca cada punto muestreado con un puntito: sin
+  // eso, en la placa real, una curva lisa de un solo color se leia como una
+  // mancha, no como una trayectoria real con datos detras.
+  static const float TRACK_WIDTH = 2.0f;
   auto drawTrack = [&](const ISSTrackPoint* pts, int count, uint16_t color) {
-    for (int i = 0; i + 1 < count; i++) {
-      if (fabs(pts[i + 1].lon - pts[i].lon) > 180.0) continue;
-      tft.drawWideLine(worldX(pts[i].lon, mapX, WORLD_MAP_W), worldY(pts[i].lat, mapY, WORLD_MAP_H),
-                        worldX(pts[i + 1].lon, mapX, WORLD_MAP_W), worldY(pts[i + 1].lat, mapY, WORLD_MAP_H),
-                        TRACK_WIDTH, color);
+    for (int i = 0; i < count; i++) {
+      int x = worldX(pts[i].lon, mapX, WORLD_MAP_W);
+      int y = worldY(pts[i].lat, mapY, WORLD_MAP_H);
+      if (i + 1 < count && fabs(pts[i + 1].lon - pts[i].lon) <= 180.0) {
+        tft.drawWideLine(x, y, worldX(pts[i + 1].lon, mapX, WORLD_MAP_W),
+                          worldY(pts[i + 1].lat, mapY, WORLD_MAP_H), TRACK_WIDTH, color);
+      }
+      tft.fillCircle(x, y, 1, color);
     }
   };
   drawTrack(iss.trackPast(), iss.trackPastCount(), TFT_CYAN);
@@ -114,6 +119,30 @@ void ISSScreen::render(const ISSClient& iss) {
     if (fabs(first.lon - p.lon) <= 180.0) {
       tft.drawWideLine(sx, sy, worldX(first.lon, mapX, WORLD_MAP_W), worldY(first.lat, mapY, WORLD_MAP_H),
                         TRACK_WIDTH, TFT_ORANGE);
+    }
+
+    // Flecha en la punta de "por venir": muestra el sentido del movimiento de
+    // un vistazo, no solo que "hay una linea ahi". Apunta en la direccion del
+    // ultimo tramo de la traza (o, si solo hay un punto futuro, desde la
+    // posicion actual).
+    const ISSTrackPoint& tip = iss.trackFuture()[iss.trackFutureCount() - 1];
+    int futureEndX = worldX(tip.lon, mapX, WORLD_MAP_W);
+    int futureEndY = worldY(tip.lat, mapY, WORLD_MAP_H);
+    int prevX = sx, prevY = sy;
+    if (iss.trackFutureCount() >= 2) {
+      const ISSTrackPoint& prev = iss.trackFuture()[iss.trackFutureCount() - 2];
+      prevX = worldX(prev.lon, mapX, WORLD_MAP_W);
+      prevY = worldY(prev.lat, mapY, WORLD_MAP_H);
+    }
+    float dx = futureEndX - prevX, dy = futureEndY - prevY;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len > 0.5f) {
+      dx /= len; dy /= len;
+      float px = -dy, py = dx; // perpendicular, para el ancho de la flecha
+      int baseX = futureEndX - (int)lroundf(dx * 6), baseY = futureEndY - (int)lroundf(dy * 6);
+      int leftX  = baseX + (int)lroundf(px * 3), leftY  = baseY + (int)lroundf(py * 3);
+      int rightX = baseX - (int)lroundf(px * 3), rightY = baseY - (int)lroundf(py * 3);
+      tft.fillTriangle(futureEndX, futureEndY, leftX, leftY, rightX, rightY, TFT_ORANGE);
     }
   }
 

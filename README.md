@@ -309,12 +309,18 @@ a `0`.
   generado una sola vez con `tools/build-worldmap.mjs` a partir de datos
   públicos de Natural Earth y compilado directo al firmware (no se descarga
   nada en tiempo de ejecución). Sobre el mapa también se dibuja la **traza de
-  la órbita**: por dónde pasó (línea celeste apagada) y hacia dónde va (línea
-  naranja) en los ~45 minutos a cada lado del momento actual —
-  `wheretheiss.at` puede reconstruir posiciones pasadas y predecir futuras a
-  partir del TLE que tiene guardado, así que alcanza con pedirle varios
-  timestamps a la vez—. Esa traza cambia poco en minutos, así que se
-  refresca cada 5 en vez de junto con la posición puntual. Debajo del mapa,
+  la órbita**: por dónde pasó (línea celeste) y hacia dónde va (línea naranja,
+  con una flecha en la punta que marca el sentido del movimiento) en los ~20
+  minutos a cada lado del momento actual, con un puntito por cada posición
+  muestreada — `wheretheiss.at` puede reconstruir posiciones pasadas y predecir
+  futuras a partir del TLE que tiene guardado, así que alcanza con pedirle
+  varios timestamps a la vez—. La ventana es de 20 minutos y no más porque la
+  ISS cruza el ecuador cada ~46: con 45 a cada lado entraba casi media órbita
+  entera, incluido el pliegue de la latitud máxima, y en 220px de ancho eso se
+  leía como un gancho en vez de una trayectoria. Esa traza cambia poco en
+  minutos, así que se refresca cada 5 en vez de junto con la posición puntual;
+  `tools/preview-iss-track.mjs` la dibuja en ASCII contra los mismos datos
+  vivos, para chequear la proyección sin flashear. Debajo del mapa,
   en texto: distancia y rumbo cardinal desde `HOME_LAT`/`HOME_LON`, altura
   orbital, velocidad y si está a la luz del sol o en la sombra de la Tierra.
   La posición puntual sí se pide cada 10 segundos: a ~27.600 km/h un dato con
