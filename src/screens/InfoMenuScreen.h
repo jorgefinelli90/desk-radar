@@ -2,7 +2,7 @@
 #include "core/DisplayManager.h"
 #include "models/UiRect.h"
 
-enum class InfoChoice { None, News, Weather };
+enum class InfoChoice { None, News, Weather, ISS };
 
 class InfoMenuScreen {
   public:
@@ -15,4 +15,5 @@ class InfoMenuScreen {
     DisplayManager& _display;
     UiRect _newsBtn;
     UiRect _weatherBtn;
+    UiRect _issBtn;
 };

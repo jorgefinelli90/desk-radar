@@ -1,12 +1,7 @@
 #include "screens/DetailScreen.h"
 #include "config.h"
 #include "utils/AirportUtils.h"
-
-const char* DetailScreen::cardinal(double deg) {
-  static const char* dirs[] = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};
-  int idx = (int)((deg + 22.5) / 45.0) % 8;
-  return dirs[idx];
-}
+#include "utils/GeoUtils.h"
 
 void DetailScreen::render(const AircraftState& a, const RouteInfo& route) {
   TFT_eSPI& tft = _display.tft();
@@ -60,7 +55,7 @@ void DetailScreen::render(const AircraftState& a, const RouteInfo& route) {
   snprintf(buf, sizeof(buf), "%.1f km", a.distanceKm);
   row("Distancia", buf, near ? TFT_RED : TFT_WHITE);
 
-  snprintf(buf, sizeof(buf), "%s  (%.0f)", cardinal(a.bearingDeg), a.bearingDeg);
+  snprintf(buf, sizeof(buf), "%s  (%.0f)", GeoUtils::cardinal(a.bearingDeg), a.bearingDeg);
   row("Rumbo", buf, TFT_WHITE);
 
   snprintf(buf, sizeof(buf), "%.0f m", a.baroAltitudeM);

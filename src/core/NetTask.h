@@ -9,6 +9,7 @@
 #include "services/OpenSkyClient.h"
 #include "services/NewsClient.h"
 #include "services/WeatherClient.h"
+#include "services/ISSClient.h"
 
 // Toda la red del firmware, corriendo en el core 0.
 //
@@ -22,12 +23,12 @@
 // El ESP32 tiene dos núcleos y el firmware usaba uno solo. Ahora el loop pide
 // trabajo y sigue dibujando a 22 fps mientras la tarea del core 0 espera a la
 // API.
-enum class NetJob : uint8_t { Aircraft, News, Weather, Route };
+enum class NetJob : uint8_t { Aircraft, News, Weather, Route, ISS };
 
 class NetTask {
   public:
-    NetTask(OpenSkyClient& os, NewsClient& news, WeatherClient& weather)
-      : _os(os), _news(news), _weather(weather) {}
+    NetTask(OpenSkyClient& os, NewsClient& news, WeatherClient& weather, ISSClient& iss)
+      : _os(os), _news(news), _weather(weather), _iss(iss) {}
 
     // Crea la tarea. Llamar después de DataLock::begin().
     void begin();
@@ -63,6 +64,7 @@ class NetTask {
     OpenSkyClient& _os;
     NewsClient&    _news;
     WeatherClient& _weather;
+    ISSClient&     _iss;
 
     TaskHandle_t      _handle  = nullptr;
     SemaphoreHandle_t _wakeup  = nullptr;  // "hay trabajo"

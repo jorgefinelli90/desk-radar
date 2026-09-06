@@ -102,6 +102,37 @@ void test_rumbos_a_los_aeropuertos_reales(void) {
       (float)GeoUtils::bearingDeg(HOME_LAT, HOME_LON, -34.5592, -58.4156)); // Aeroparque, al E
 }
 
+// --- GeoUtils: cardinal ------------------------------------------------------
+
+void test_cardinal_de_los_8_rumbos_exactos(void) {
+  TEST_ASSERT_EQUAL_STRING("N",  GeoUtils::cardinal(0));
+  TEST_ASSERT_EQUAL_STRING("NE", GeoUtils::cardinal(45));
+  TEST_ASSERT_EQUAL_STRING("E",  GeoUtils::cardinal(90));
+  TEST_ASSERT_EQUAL_STRING("SE", GeoUtils::cardinal(135));
+  TEST_ASSERT_EQUAL_STRING("S",  GeoUtils::cardinal(180));
+  TEST_ASSERT_EQUAL_STRING("SO", GeoUtils::cardinal(225));
+  TEST_ASSERT_EQUAL_STRING("O",  GeoUtils::cardinal(270));
+  TEST_ASSERT_EQUAL_STRING("NO", GeoUtils::cardinal(315));
+}
+
+// El corte entre NO y N cae en 337.5: justo antes tiene que seguir dando NO, y
+// 360 (una vuelta completa) tiene que volver a dar N como 0.
+void test_cardinal_en_los_bordes_de_cada_sector(void) {
+  TEST_ASSERT_EQUAL_STRING("N",  GeoUtils::cardinal(22.49));
+  TEST_ASSERT_EQUAL_STRING("NE", GeoUtils::cardinal(22.51));
+  TEST_ASSERT_EQUAL_STRING("NO", GeoUtils::cardinal(337.49));
+  TEST_ASSERT_EQUAL_STRING("N",  GeoUtils::cardinal(337.51));
+  TEST_ASSERT_EQUAL_STRING("N",  GeoUtils::cardinal(360.0));
+}
+
+// bearingDeg nunca da negativo (ver test_el_rumbo_siempre_cae_en_0_360), pero
+// cardinal es una funcion de proposito general: un rumbo negativo chico (el
+// caso realista si algun dia se le suma un offset a mano) tiene que dar el
+// mismo resultado que su equivalente positivo, no un indice fuera de rango.
+void test_cardinal_con_grados_negativos(void) {
+  TEST_ASSERT_EQUAL_STRING(GeoUtils::cardinal(350.0), GeoUtils::cardinal(-10.0));
+}
+
 // --- GeoUtils: bounding box -------------------------------------------------
 
 void test_el_bbox_contiene_su_centro(void) {
@@ -247,6 +278,10 @@ void setup() {
   RUN_TEST(test_rumbos_cardinales);
   RUN_TEST(test_el_rumbo_siempre_cae_en_0_360);
   RUN_TEST(test_rumbos_a_los_aeropuertos_reales);
+
+  RUN_TEST(test_cardinal_de_los_8_rumbos_exactos);
+  RUN_TEST(test_cardinal_en_los_bordes_de_cada_sector);
+  RUN_TEST(test_cardinal_con_grados_negativos);
 
   RUN_TEST(test_el_bbox_contiene_su_centro);
   RUN_TEST(test_el_bbox_cubre_el_radio_pedido);

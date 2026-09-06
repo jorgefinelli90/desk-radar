@@ -12,7 +12,4 @@ class DetailScreen {
 
   private:
     DisplayManager& _display;
-
-    // Convierte un rumbo en grados a un texto cardinal (N, NE, E, ...)
-    static const char* cardinal(double deg);
 };

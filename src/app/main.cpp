@@ -27,9 +27,11 @@
 #include "services/WeatherClient.h"
 #include "screens/WeatherScreen.h"
 #include "screens/WeatherForecastScreen.h"
+#include "services/ISSClient.h"
+#include "screens/ISSScreen.h"
 
 enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, NewsDetail,
-                  Weather, WeatherForecast, Settings };
+                  Weather, WeatherForecast, ISS, Settings };
 
 DisplayManager display;
 Clock          deviceClock;   // NTP; la barra de estado lo consulta via display
@@ -37,9 +39,10 @@ TouchManager   touch(display.tft());
 OpenSkyClient  opensky;      // credenciales desde NVS, ya no del compilador
 NewsClient     newsClient;   // idem
 WeatherClient  weatherClient;
+ISSClient      issClient;
 WebPortal      webPortal(display, deviceConfig, opensky);
 // Toda la red vive en el core 0: el loop pide y sigue dibujando (ver NetTask.h)
-NetTask        netTask(opensky, newsClient, weatherClient);
+NetTask        netTask(opensky, newsClient, weatherClient, issClient);
 Banner         banner(display);
 SettingsScreen settingsScreen(display);
 // mapTiles va antes que las pantallas que lo usan: guardan una referencia, y el
@@ -55,6 +58,7 @@ NewsScreen     newsScreen(display);
 NewsDetailScreen newsDetailScreen(display);
 WeatherScreen  weatherScreen(display);
 WeatherForecastScreen weatherForecastScreen(display);
+ISSScreen      issScreen(display);
 
 Mode currentMode = Mode::Home;
 Mode detailReturnMode = Mode::Radar; // a qué pantalla volver al salir del Detail
@@ -184,6 +188,8 @@ void fetchForCurrentMode() {
     if (newsClient.shouldRefresh()) netTask.request(NetJob::News);
   } else if (currentMode == Mode::Weather) {
     if (weatherClient.shouldRefresh()) netTask.request(NetJob::Weather);
+  } else if (currentMode == Mode::ISS) {
+    if (issClient.shouldRefresh()) netTask.request(NetJob::ISS);
   }
 
   lastFetch = millis();
@@ -209,9 +215,10 @@ void netTick() {
     }
   }
 
-  // Noticias o clima nuevos: los datos ya están publicados, solo falta dibujar.
+  // Noticias, clima o ISS nuevos: los datos ya están publicados, solo falta
+  // dibujar.
   if (netTask.takeRefreshed()) {
-    if (currentMode == Mode::News || currentMode == Mode::Weather) {
+    if (currentMode == Mode::News || currentMode == Mode::Weather || currentMode == Mode::ISS) {
       renderCurrentMode();
     }
   }
@@ -287,7 +294,7 @@ static uint16_t dataStatusColor() {
 static Mode openDetailFrom(const AircraftState* hit);
 
 // De que fuente se alimenta la pantalla. Decide el ciclo de refresco.
-enum class DataNeed : uint8_t { None, Aircraft, News, Weather };
+enum class DataNeed : uint8_t { None, Aircraft, News, Weather, ISS };
 
 struct ModeOps {
   Mode     mode;
@@ -387,6 +394,7 @@ static const ModeOps MODE_OPS[] = {
       switch (infoMenuScreen.hitTest(x, y)) {
         case InfoChoice::News:    return Mode::News;
         case InfoChoice::Weather: return Mode::Weather;
+        case InfoChoice::ISS:     return Mode::ISS;
         default:                  return Mode::InfoMenu;
       }
     } },
@@ -433,6 +441,14 @@ static const ModeOps MODE_OPS[] = {
     []{ DataLock::Guard g; weatherForecastScreen.render(weatherClient.now()); },
     []{},
     [](uint16_t, uint16_t) { return Mode::Weather; } },
+
+  // Como Clima: se refresca sola y cualquier toque vuelve a Home (via la barra
+  // de arriba, es una pantalla hoja del menu Mas Info).
+  { Mode::ISS, DataNeed::ISS, true, 30,
+    []{}, []{},
+    []{ DataLock::Guard g; issScreen.render(issClient); },
+    []{},
+    [](uint16_t, uint16_t) { return Mode::ISS; } },
 
   { Mode::Settings, DataNeed::None, true, 30,
     []{ settingsScreen.onEnter(); }, []{},
@@ -543,12 +559,13 @@ static void refreshDataFor(const ModeOps& ops) {
       fetchForCurrentMode();
       renderCurrentMode();
     }
-  } else if (ops.needs == DataNeed::News || ops.needs == DataNeed::Weather) {
-    // Noticias y clima no siguen el refresco adaptativo: cada cliente tiene su
-    // propio cache y su propio reintento (API_RETRY_MS). Se pide y nada mas; el
-    // redibujo lo dispara netTick() cuando los datos llegan.
-    const bool should = (ops.needs == DataNeed::News) ? newsClient.shouldRefresh()
-                                                      : weatherClient.shouldRefresh();
+  } else if (ops.needs == DataNeed::News || ops.needs == DataNeed::Weather || ops.needs == DataNeed::ISS) {
+    // Noticias, clima e ISS no siguen el refresco adaptativo: cada cliente
+    // tiene su propio cache y su propio reintento (API_RETRY_MS). Se pide y
+    // nada mas; el redibujo lo dispara netTick() cuando los datos llegan.
+    const bool should = (ops.needs == DataNeed::News)    ? newsClient.shouldRefresh()
+                       : (ops.needs == DataNeed::Weather) ? weatherClient.shouldRefresh()
+                                                          : issClient.shouldRefresh();
     if (should && WiFi.status() == WL_CONNECTED && !netTask.busy()) {
       fetchForCurrentMode();
     }

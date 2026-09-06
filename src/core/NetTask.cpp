@@ -88,6 +88,8 @@ void NetTask::run() {
       if (_news.refresh()) _refreshed = true;
     } else if (job == NetJob::Weather) {
       if (_weather.refresh()) _refreshed = true;
+    } else if (job == NetJob::ISS) {
+      if (_iss.refresh()) _refreshed = true;
     } else if (job == NetJob::Route) {
       RouteInfo route;
       if (_os.fetchRoute(_routeIcao24, route)) {

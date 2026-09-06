@@ -162,6 +162,12 @@ static const int   NEWS_MAX_ITEMS = 5;
 // HOME_LAT/HOME_LON y devuelve la hora local gracias a timezone=auto.
 static const char* OPENMETEO_URL = "https://api.open-meteo.com/v1/forecast";
 
+// --- Estacion Espacial Internacional (wheretheiss.at) ---
+// Gratis, sin API key. 25544 es el numero NORAD de la ISS (no cambia). El
+// mismo host termina en el mismo root de Let's Encrypt que los otros tres,
+// asi que usa TLS_ROOT_CA_PEM sin agregar nada nuevo.
+static const char* ISS_URL = "https://api.wheretheiss.at/v1/satellites/25544";
+
 // --- Cache de noticias y clima ---
 // Son datos que cambian lento: los guardamos en RAM y no volvemos a pegarle a
 // la API mientras el cache siga vigente. Así el free tier de GNews (100
@@ -173,6 +179,12 @@ static const uint32_t WEATHER_CACHE_MS = 15UL * 60UL * 1000UL; // 15 min
 // request que el clima actual, asi que pedir 5 en vez de 1 no cuesta una
 // llamada mas a la API; solo agranda un poco el JSON.
 static const int WEATHER_FORECAST_DAYS = 5;
+
+// La ISS orbita a ~27.600 km/h: en los 15 min que dura el cache del clima se
+// habria movido ~7.000 km, casi media vuelta al planeta. Un cache tan corto
+// como este es al pedo dejarlo mucho mas: cuanto mas rapido se mueve el dato,
+// menos vale la pena guardarlo.
+static const uint32_t ISS_CACHE_MS = 10UL * 1000UL; // 10 s
 
 // Si una request falla, esperamos esto antes de reintentar (no martillar la API)
 static const uint32_t API_RETRY_MS = 60UL * 1000UL;

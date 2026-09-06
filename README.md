@@ -6,8 +6,9 @@ aeropuertos elegidos (modo Aeropuertos), usando la API gratuita de
 [OpenSky Network](https://opensky-network.org/).
 
 Además tiene una sección **Más info** con los titulares del día en Argentina
-([GNews](https://gnews.io/)) y el clima actual de tu ubicación
-([Open-Meteo](https://open-meteo.com/)).
+([GNews](https://gnews.io/)), el clima actual de tu ubicación
+([Open-Meteo](https://open-meteo.com/)) y la posición en vivo de la Estación
+Espacial Internacional ([wheretheiss.at](https://wheretheiss.at/)).
 
 ## Características
 
@@ -19,13 +20,15 @@ Además tiene una sección **Más info** con los titulares del día en Argentina
 - 🛬 **Modo Aeropuertos**: tráfico bajo cerca de Ezeiza, Aeroparque o El Palomar.
 - 📰🌤️ **Noticias y clima** de tu zona (GNews + Open-Meteo), con **pronóstico
   extendido** de hasta 5 días.
+- 🛰️ **Posición de la ISS en vivo**: distancia y rumbo desde tu casa, altura
+  orbital, velocidad y si está a la luz del sol o en la sombra de la Tierra.
 - 🌐 **Se configura entero desde el navegador**, sin recompilar ni tocar
   código: WiFi y API keys se cargan por un portal cautivo la primera vez.
 - 🔄 **Se actualiza por WiFi (OTA)**: subís un `firmware.bin` nuevo desde
   `desk-radar.local/update` y el dispositivo se reinicia solo, sin cable —
   ver [Actualizar por WiFi](#actualizar-por-wifi-ota).
-- 🔒 Panel web opcionalmente protegido con PIN, TLS validado contra las tres
-  APIs, y 58 tests automáticos.
+- 🔒 Panel web opcionalmente protegido con PIN, TLS validado contra las cuatro
+  APIs, y 61 tests automáticos.
 
 Ver [Configuración inicial](#configuración-inicial) para arrancar.
 
@@ -272,7 +275,7 @@ a `0`.
   Ezeiza (SAEZ), Aeroparque (SABE) o El Palomar (SADP). Un botón en la parte
   inferior ("Siguiente aeropuerto >") rota entre los 3. Tocar una fila abre la
   ficha del avión, igual que en Radar y Mapa.
-- **Más info**: sub-menú con dos botones táctiles, "NOTICIAS" y "CLIMA".
+- **Más info**: sub-menú con tres botones táctiles, "NOTICIAS", "CLIMA" e "ISS".
 - **Pantalla Noticias**: los 5 titulares más recientes de Argentina (GNews,
   `country=ar&lang=es`). Cada fila muestra el titular partido en hasta dos
   renglones, más el medio y la hora de publicación en horario argentino. Los
@@ -289,8 +292,15 @@ a `0`.
   Tocá la pantalla para el **pronóstico extendido** (hasta 5 días, hoy
   incluido): día, condición y máxima/mínima. Viene en la misma request que el
   clima actual, así que no cuesta una llamada más a la API.
-- **Cache**: noticias y clima se guardan en RAM y no se vuelven a pedir
-  mientras el cache siga vigente (20 y 15 minutos respectivamente, en
+- **Pantalla ISS**: distancia y rumbo cardinal desde `HOME_LAT`/`HOME_LON`
+  hasta la posición actual de la Estación Espacial Internacional, altura
+  orbital, velocidad y si está a la luz del sol o en la sombra de la Tierra
+  (`wheretheiss.at`, sin API key). Un puntito orbitando un círculo muestra el
+  rumbo de un vistazo. La ISS da la vuelta al planeta en ~90 minutos (unos
+  27.600 km/h), así que el cache es de apenas 10 segundos: mucho más y el
+  dato mostrado ya no coincide ni de cerca con la posición real.
+- **Cache**: noticias, clima e ISS se guardan en RAM y no se vuelven a pedir
+  mientras el cache siga vigente (20, 15 y 0.17 minutos respectivamente, en
   `config.h`). Si una request falla, se reintenta recién al minuto en vez de
   martillar la API. Con eso el free tier de GNews (100 requests/día) alcanza
   de sobra aunque dejes la pantalla puesta todo el día.
@@ -336,12 +346,14 @@ src/
 |   |-- InfoMenuScreen.{h,cpp}
 |   |-- MapScreen.{h,cpp}
 |   |-- NewsDetailScreen.{h,cpp}   # la noticia abierta desde la lista
+|   |-- ISSScreen.{h,cpp}          # posicion de la ISS
 |   |-- NewsScreen.{h,cpp}
 |   |-- RadarScreen.{h,cpp}
 |   |-- SettingsScreen.{h,cpp}
 |   |-- WeatherForecastScreen.{h,cpp} # pronostico extendido, se abre desde Clima
 |   `-- WeatherScreen.{h,cpp}
 |-- services/
+|   |-- ISSClient.{h,cpp}         # posicion de la ISS y cache
 |   |-- MapTiles.{h,cpp}          # mapas raster en LittleFS
 |   |-- NewsClient.{h,cpp}        # titulares y cache
 |   |-- OpenSkyClient.{h,cpp}     # vuelos y OAuth2
@@ -374,7 +386,7 @@ test/
 Se corren **sobre la placa**, con el cable puesto:
 
 ```bash
-pio test -e esp32dev              # las dos suites (58 tests)
+pio test -e esp32dev              # las dos suites (61 tests)
 pio test -e esp32dev -f test_geo  # solo una
 ```
 
@@ -543,6 +555,7 @@ están en RAM.
 | Radar / Mapa / Aeropuertos / Detalle | [OpenSky Network](https://opensky-network.org/) | OAuth2 client id + secret | gratis para uso personal |
 | Noticias | [GNews.io](https://gnews.io/) | sí (`GNEWS_API_KEY`) | 100 requests/día, **sin tarjeta de crédito** |
 | Clima | [Open-Meteo](https://open-meteo.com/) | **no hace falta** | libre para uso no comercial |
+| ISS | [wheretheiss.at](https://wheretheiss.at/) | **no hace falta** | sin límite documentado, uso liviano (cache de 10s) |
 
 ### Backoff y contador de OpenSky
 
@@ -893,19 +906,21 @@ Para medir esto en tu placa, poné `RADAR_DEBUG_TIMING` en 1 en `config.h`: cada
 
 ### TLS validado, sin bundle de CAs
 
-Los tres clientes HTTPS (OpenSky, GNews, Open-Meteo) usaban
+Los clientes HTTPS (OpenSky, GNews, Open-Meteo) usaban
 `client.setInsecure()`, que acepta cualquier certificado — es lo mismo que no
 tener TLS: alguien en el medio del WiFi podía hacerse pasar por cualquiera de
-los tres y quedarse con el client secret de OpenSky o la API key de GNews.
+ellos y quedarse con el client secret de OpenSky o la API key de GNews.
 Estaba bloqueado hasta que hubo NTP (validar una cadena de certificados
-necesita saber qué día es); con el reloj ya andando, se cerró.
+necesita saber qué día es); con el reloj ya andando, se cerró. El cliente de
+la ISS, agregado después, se sumó directamente con `setCACert` — para entonces
+ya no hacía falta discutir el enfoque.
 
 Se descartó armar un bundle completo de CAs (el que usan los navegadores):
 `arduino_esp_crt_bundle_attach` existe en el framework, pero el binario del
 bundle en sí no viene incluido — hay que generarlo aparte con una herramienta
 de ESP-IDF, y agregaría varias decenas de KB justo cuando la flash ya está al
-76 % de un slot OTA. En su lugar se **pinea el root CA** que comparten los tres
-hosts:
+76 % de un slot OTA. En su lugar se **pinea el root CA** que comparten todos
+los hosts:
 
 ```cpp
 static const char* TLS_ROOT_CA_PEM = R"CERT(
@@ -915,22 +930,22 @@ static const char* TLS_ROOT_CA_PEM = R"CERT(
 )CERT";
 ```
 
-Los cuatro hosts (`opensky-network.org`, `auth.opensky-network.org`, `gnews.io`,
-`api.open-meteo.com`) terminan en el mismo root: **ISRG Root X1**, de Let's
-Encrypt. Se pinea el **root** y no un certificado de hoja ni un intermedio a
-propósito: los de hoja rotan cada ~90 días y los intermedios de tanto en tanto,
-pero el root tiene vigencia hasta 2035 — con eso alcanza para no tener que
-tocar esto de nuevo.
+Los cinco hosts (`opensky-network.org`, `auth.opensky-network.org`, `gnews.io`,
+`api.open-meteo.com`, `api.wheretheiss.at`) terminan en el mismo root: **ISRG
+Root X1**, de Let's Encrypt. Se pinea el **root** y no un certificado de hoja
+ni un intermedio a propósito: los de hoja rotan cada ~90 días y los
+intermedios de tanto en tanto, pero el root tiene vigencia hasta 2035 — con eso
+alcanza para no tener que tocar esto de nuevo.
 
 El PEM se extrajo de un almacén de confianza **local** (el bundle de CAs que
 trae Git para Windows), no de una conexión en vivo a los hosts: confiar en lo
 que devuelve una conexión hecha desde un entorno de desarrollo en la nube
 sería darle la razón a un posible intermediario en el camino, justo lo que
 esto viene a evitar. Se confirmó funcionando en la práctica, con el
-dispositivo en su red real: los tres servicios respondieron con el
+dispositivo en su red real: los servicios respondieron con el
 certificado validado (`[OpenSky] Token renovado OK`, `[News] N titulares
-actualizados`, `[Clima] N.N C, código WMO N`, todos sin ningún error de
-handshake).
+actualizados`, `[Clima] N.N C, código WMO N`, `[ISS] N km de altura...`, todos
+sin ningún error de handshake).
 
 ### Ruta de un avión: una segunda consulta, no una tabla de aeropuertos
 
@@ -984,7 +999,7 @@ tarea de red pasó de 10 a 14 KB en vez de dejarlo al límite medido.
 
 ### ⚠️ Leer el body con `getString()`, nunca con `getStream()`
 
-Las tres APIs (OpenSky, GNews y Open-Meteo) responden con
+Las APIs de este proyecto (OpenSky, GNews, Open-Meteo y wheretheiss.at) responden con
 `Transfer-Encoding: chunked`. En el `HTTPClient` del core de ESP32,
 `getStream()` devuelve el socket TCP **crudo**:
 
@@ -1029,5 +1044,6 @@ El código es [MIT](LICENSE): usalo, modificalo, hacé lo que quieras.
 
 Eso no cubre los datos de terceros que el proyecto consume, que tienen sus
 propios términos: los tiles del mapa son © Esri y colaboradores (ver
-[Atribución](#atribución)), y los datos de OpenSky, GNews y Open-Meteo se usan
-bajo las condiciones de cada API (ver [APIs usadas](#apis-usadas)).
+[Atribución](#atribución)), y los datos de OpenSky, GNews, Open-Meteo y
+wheretheiss.at se usan bajo las condiciones de cada API (ver
+[APIs usadas](#apis-usadas)).

@@ -32,6 +32,17 @@ namespace GeoUtils {
     return deg;
   }
 
+  // Rumbo en grados -> punto cardinal de 8 direcciones (N, NE, E, ...). Antes
+  // vivia duplicado (o a punto de duplicarse) como metodo privado de cada
+  // pantalla que muestra un rumbo; ahora es una funcion de GeoUtils como
+  // bearingDeg, del que depende directamente.
+  inline const char* cardinal(double deg) {
+    static const char* dirs[] = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};
+    int idx = (int)(fmod(deg + 22.5, 360.0) / 45.0);
+    if (idx < 0) idx += 8; // fmod de un negativo puede devolver negativo
+    return dirs[idx];
+  }
+
   // Bounding box aproximado (lamin, lamax, lomin, lomax) alrededor de un
   // punto dado, para un radio en km. Suficiente para bbox chicos (<~100km).
   struct BBox { double lamin, lamax, lomin, lomax; };
