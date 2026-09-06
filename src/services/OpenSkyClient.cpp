@@ -225,3 +225,101 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
   out.swap(frescos);
   return true;
 }
+
+bool OpenSkyClient::fetchRoute(const char* icao24, RouteInfo& out) {
+  out = RouteInfo{};
+  StrUtils::copyTrimmed(icao24, out.icao24, sizeof(out.icao24));
+
+  // Comparte contador y backoff con fetchStates: un 429 acá significa lo
+  // mismo, el cupo de la cuenta se agotó, no importa por qué endpoint.
+  if (isBackingOff()) return false;
+  if (!ensureToken()) return false;
+
+  // begin/end son epoch: sin hora de NTP la ventana saldría 1970-1970 y la
+  // request sería inútil. localDayNumber() ya usa la misma marca de "hora
+  // creíble" que Clock.cpp.
+  time_t now = time(nullptr);
+  if (now < 1700000000) return false;
+
+  WiFiClientSecure client;
+  client.setCACert(TLS_ROOT_CA_PEM);
+
+  HTTPClient http;
+  char url[256];
+  snprintf(url, sizeof(url), "%s?icao24=%s&begin=%ld&end=%ld",
+    OPENSKY_FLIGHTS_URL, out.icao24,
+    (long)(now - ROUTE_LOOKBACK_S), (long)now);
+
+  if (!http.begin(client, url)) {
+    Serial.println("[OpenSky] No se pudo iniciar conexion de ruta");
+    return false;
+  }
+
+  http.setTimeout(15000);
+  http.addHeader("Authorization", "Bearer " + _accessToken);
+
+  uint32_t day = localDayNumber();
+  if (day != 0 && day != _dayNumber) {
+    _dayNumber = day;
+    _requestsToday = 0;
+  }
+
+  int code = http.GET();
+  _requestsToday++;
+
+  if (code == 429) {
+    _backoffMs = nextBackoffMs(_backoffMs);
+    _backoffUntilMs = millis() + _backoffMs;
+    Serial.printf("[OpenSky] 429 (cupo agotado) pidiendo ruta: backoff de %u s\n",
+                  (unsigned)(_backoffMs / 1000));
+    http.end();
+    return false;
+  }
+
+  // 404 es como OpenSky dice "no hay vuelos de este avion en la ventana": no
+  // es un error, es "sin datos de ruta". out ya quedo con valid=false.
+  if (code == 404) {
+    http.end();
+    return true;
+  }
+
+  if (code != 200) {
+    Serial.printf("[OpenSky] Error pidiendo ruta, HTTP %d\n", code);
+    http.end();
+    return false;
+  }
+
+  _backoffMs = 0;
+  _backoffUntilMs = 0;
+
+  String payload = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) {
+    Serial.print("[OpenSky] Error parseando ruta: ");
+    Serial.println(err.c_str());
+    return false;
+  }
+
+  JsonArray flights = doc.as<JsonArray>();
+  if (flights.isNull() || flights.size() == 0) {
+    return true; // sin vuelos en la ventana, no es un error
+  }
+
+  // El ultimo elemento es el vuelo mas reciente: OpenSky los devuelve en
+  // orden cronologico y lo que interesa es el que esta en curso ahora (o el
+  // ultimo que hizo, si esta en tierra).
+  JsonObject last = flights[flights.size() - 1];
+  const char* dep = last["estDepartureAirport"].is<const char*>()
+                      ? last["estDepartureAirport"].as<const char*>() : nullptr;
+  const char* arr = last["estArrivalAirport"].is<const char*>()
+                      ? last["estArrivalAirport"].as<const char*>() : nullptr;
+
+  StrUtils::copyTrimmed(dep, out.depIcao, sizeof(out.depIcao));
+  StrUtils::copyTrimmed(arr, out.arrIcao, sizeof(out.arrIcao));
+  out.valid = out.depIcao[0] || out.arrIcao[0];
+
+  return true;
+}

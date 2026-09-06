@@ -218,6 +218,10 @@ a `0`.
   coordenadas). La zona tocable es más grande que el punto dibujado, así que
   no hace falta puntería. La ficha queda congelada mientras la mirás; tocás
   de nuevo en cualquier lado y volvés al radar.
+  A los pocos segundos de abrirla aparece, si OpenSky la tiene, la **ruta
+  estimada** (origen -> destino, por ejemplo "Aeroparque -> Ezeiza"): llega
+  aparte porque es una segunda consulta a la API, y no vale la pena pedirla
+  para cada avión que aparece en el radar, solo para el que estás mirando.
 - **Modo Aeropuertos**: lista de tráfico con altitud baja (<3000m) cerca de
   Ezeiza (SAEZ), Aeroparque (SABE) o El Palomar (SADP). Un botón en la parte
   inferior ("Siguiente aeropuerto >") rota entre los 3. Tocar una fila abre la
@@ -293,6 +297,7 @@ src/
 |   |-- OpenSkyClient.{h,cpp}     # vuelos y OAuth2
 |   `-- WeatherClient.{h,cpp}     # clima y cache
 |-- utils/
+|   |-- AirportUtils.h            # nombre legible para un ICAO de aeropuerto
 |   |-- StrUtils.h                # copia a buffers fijos, sin dependencias
 |   |-- GeoMap.h                  # proyeccion geografica
 |   |-- GeoUtils.h                # calculos geograficos
@@ -918,6 +923,33 @@ certificado validado (`[OpenSky] Token renovado OK`, `[News] N titulares
 actualizados`, `[Clima] N.N C, código WMO N`, todos sin ningún error de
 handshake).
 
+### Ruta de un avión: una segunda consulta, no una tabla de aeropuertos
+
+La ficha de detalle pide el origen/destino a `/flights/aircraft` con una
+ventana de 24 h hacia atrás (`begin`/`end` en epoch, por eso necesita NTP igual
+que la validación de TLS) y se queda con el **último** vuelo de la lista, que
+es el que está en curso o el más reciente si el avión está en tierra. Es una
+segunda request, separada de `/states/all`, así que se pide **una sola vez al
+abrir la ficha**, no para cada avión que aparece en el radar — comparte el
+mismo contador y backoff que `fetchStates()`, porque un 429 en cualquiera de
+los dos endpoints significa lo mismo: se agotó el cupo de la cuenta.
+
+OpenSky devuelve el origen y destino como **código ICAO** (`SAEZ`, no
+"Ezeiza"). El proyecto solo traduce a nombre los 3 aeropuertos que ya tiene en
+`AIRPORTS` (`config.h`); para cualquier otro muestra el código tal cual. Una
+base completa de aeropuertos son miles de filas para un dato de más en una
+ficha, no una app de vuelos.
+
+Como es una segunda consulta, la respuesta llega **después** de que la ficha ya
+se dibujó (la ficha no espera). Si para cuando llega el usuario ya volvió al
+radar o pasó a mirar otro avión, se descarta: `RouteInfo` lleva el `icao24` al
+que corresponde, y sólo se aplica si sigue siendo el avión que se está mirando.
+
+Probado contra la API real: para un avión sin callsign visto en el radar,
+`/flights/aircraft` devolvió 3 vuelos en la ventana y el último traía
+`estDepartureAirport=SABE` (Aeroparque) sin destino todavía — la ficha muestra
+"Aeroparque -> ?" en ese caso, mejor que no mostrar nada.
+
 ### ⚠️ Leer el body con `getString()`, nunca con `getStream()`
 
 Las tres APIs (OpenSky, GNews y Open-Meteo) responden con
@@ -954,12 +986,9 @@ del payload salen por el monitor serie.
 
 ## Próximos pasos (fuera del MVP)
 
-- Traer datos de ruta (origen/destino) del avión seleccionado con el endpoint
-  `/flights/aircraft` de OpenSky, para enriquecer la ficha de detalle.
 - Usar T_IRQ (GPIO17) por interrupción en vez de polling, para ahorrar CPU.
 - Usar el NeoPixel para alertar visualmente cuando hay tráfico muy cerca.
 - Cachear también los resultados de OpenSky, para no gastar cupo si dos modos
   piden zonas solapadas (Noticias y Clima ya cachean).
 - Pronóstico extendido en la pantalla de Clima: Open-Meteo devuelve los
   próximos días en la misma request, solo falta dibujarlos.
-- Manejo de errores de red más robusto (reintentos con backoff).

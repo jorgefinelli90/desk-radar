@@ -138,8 +138,15 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 )CERT";
 
 // --- OpenSky API ---
-static const char* OPENSKY_TOKEN_URL  = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
-static const char* OPENSKY_STATES_URL = "https://opensky-network.org/api/states/all";
+static const char* OPENSKY_TOKEN_URL   = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
+static const char* OPENSKY_STATES_URL  = "https://opensky-network.org/api/states/all";
+static const char* OPENSKY_FLIGHTS_URL = "https://opensky-network.org/api/flights/aircraft";
+
+// Ventana hacia atras para encontrar el vuelo actual de un avion via
+// /flights/aircraft (necesita un begin/end en epoch). 24h cubre vuelos largos
+// sin pedir de mas: OpenSky permite hasta 30 dias de ventana, pero cuanto mas
+// larga, mas historial irrelevante hay que revisar del lado del servidor.
+static const uint32_t ROUTE_LOOKBACK_S = 24UL * 60UL * 60UL;
 
 // --- Noticias (GNews.io) ---
 // Free tier: 100 requests/día, sin tarjeta de crédito, hasta 10 artículos por

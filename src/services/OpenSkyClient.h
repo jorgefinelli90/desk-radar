@@ -32,6 +32,17 @@ struct AircraftState {
   const char* label() const { return callsign[0] ? callsign : icao24; }
 };
 
+// Origen/destino estimados de un vuelo, via /flights/aircraft. "Estimados"
+// porque asi los llama la propia OpenSky: los infiere de la trayectoria, no
+// los lee de un plan de vuelo. icao24 identifica de que avion es esta ruta,
+// para poder descartarla si para cuando llega el usuario ya paso a mirar otro.
+struct RouteInfo {
+  char icao24[7]  = {0};
+  char depIcao[5] = {0}; // codigo ICAO del aeropuerto de origen, o "" si no vino
+  char arrIcao[5] = {0}; // idem destino
+  bool valid      = false; // true si vino al menos uno de los dos
+};
+
 class OpenSkyClient {
   public:
     // Las credenciales ya no vienen del compilador: se leen de NVS en runtime
@@ -46,6 +57,16 @@ class OpenSkyClient {
     // incluido el caso en que ni siquiera se intenta por estar en backoff (ver
     // isBackingOff()).
     bool fetchStates(const GeoUtils::BBox& box, std::vector<AircraftState>& out);
+
+    // Busca el vuelo mas reciente de un avion en las ultimas ROUTE_LOOKBACK_S
+    // horas, para sacarle el origen/destino estimado. Se llama una sola vez al
+    // abrir la ficha de un avion (no en cada refresco), asi que el gasto de
+    // cupo es chico frente al de fetchStates(). Comparte el mismo contador y
+    // backoff: un 429 en esta ruta significa lo mismo que en /states/all.
+    //
+    // Devuelve true si la request salio bien, aunque no haya encontrado ningun
+    // vuelo (out.valid queda en false); false solo si la request en si fallo.
+    bool fetchRoute(const char* icao24, RouteInfo& out);
 
     // --- Metricas para el dashboard --------------------------------------
     // volatile y no bajo DataLock: son enteros de 32 bits alineados, y en el

@@ -1,5 +1,6 @@
 #include "screens/DetailScreen.h"
 #include "config.h"
+#include "utils/AirportUtils.h"
 
 const char* DetailScreen::cardinal(double deg) {
   static const char* dirs[] = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};
@@ -7,7 +8,7 @@ const char* DetailScreen::cardinal(double deg) {
   return dirs[idx];
 }
 
-void DetailScreen::render(const AircraftState& a) {
+void DetailScreen::render(const AircraftState& a, const RouteInfo& route) {
   TFT_eSPI& tft = _display.tft();
   tft.fillScreen(TFT_BLACK);
 
@@ -20,8 +21,20 @@ void DetailScreen::render(const AircraftState& a) {
   tft.setTextColor(TFT_GREENYELLOW, TFT_BLACK);
   tft.drawString(cs, tft.width() / 2, 46, 4);
 
+  // La ruta (origen -> destino) llega asincronica, un rato despues de abrir la
+  // ficha: cuando esta lista se agrega una linea mas y el ICAO24 sube un poco,
+  // sin tocar el resto del layout (el separador de abajo queda fijo en el
+  // mismo y de siempre).
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(String("ICAO24  ") + a.icao24, tft.width() / 2, 70, 1);
+  if (route.valid) {
+    tft.drawString(String("ICAO24  ") + a.icao24, tft.width() / 2, 62, 1);
+
+    String routeLine = airportLabel(route.depIcao) + " -> " + airportLabel(route.arrIcao);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString(routeLine, tft.width() / 2, 76, 1);
+  } else {
+    tft.drawString(String("ICAO24  ") + a.icao24, tft.width() / 2, 70, 1);
+  }
 
   tft.drawFastHLine(10, 86, tft.width() - 20, TFT_DARKGREEN);
 

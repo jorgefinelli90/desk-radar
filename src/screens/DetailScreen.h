@@ -6,7 +6,9 @@ class DetailScreen {
   public:
     explicit DetailScreen(DisplayManager& display) : _display(display) {}
 
-    void render(const AircraftState& a);
+    // route puede llegar sin valid (todavia no respondio, o OpenSky no
+    // encontro vuelos): en ese caso no se dibuja la linea de ruta.
+    void render(const AircraftState& a, const RouteInfo& route);
 
   private:
     DisplayManager& _display;

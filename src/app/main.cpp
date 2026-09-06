@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <vector>
+#include <string.h>
 
 #include "config.h"
 #include "core/DeviceConfig.h"  // credenciales en NVS (reemplaza a secrets.h)
@@ -59,6 +60,11 @@ int  currentAirportIdx = 0;
 
 // Copia del avión que se está viendo en modo Detail
 AircraftState selectedAircraft;
+
+// Ruta (origen/destino) de ese avión, si OpenSky la tiene. Llega asincronica
+// via NetTask; se pide al entrar a Detail y se dibuja cuando llega (ver
+// MODE_OPS y netTick()).
+RouteInfo selectedRoute;
 
 // Idem para la noticia abierta. Copia y no indice: la tarea de red puede
 // republicar los titulares mientras estas leyendo uno, y el que estaba en la
@@ -207,6 +213,17 @@ void netTick() {
       renderCurrentMode();
     }
   }
+
+  // Ruta de un avión: puede llegar cuando el usuario ya volvió al radar o pasó
+  // a mirar otro avión. Se descarta si no es la que se pidió para el que se
+  // está mirando ahora.
+  RouteInfo route;
+  if (netTask.takeRoute(route)) {
+    if (strcmp(route.icao24, selectedAircraft.icao24) == 0) {
+      selectedRoute = route;
+      if (currentMode == Mode::Detail) renderCurrentMode();
+    }
+  }
 }
 
 // --- Frescura de los datos de OpenSky ---------------------------------------
@@ -348,8 +365,15 @@ static const ModeOps MODE_OPS[] = {
   // None) y cualquier toque vuelve al origen, incluida la barra de arriba, por
   // eso statusBarBack va en false.
   { Mode::Detail, DataNeed::None, false, 30,
-    []{}, []{},
-    []{ detailScreen.render(selectedAircraft); },
+    []{
+      // Ruta: enriquecido opcional, se pide al entrar. Se resetea antes de
+      // pedir para no mostrar un instante la ruta del avion anterior mientras
+      // llega la nueva.
+      selectedRoute = RouteInfo{};
+      netTask.requestRoute(selectedAircraft.icao24);
+    },
+    []{},
+    []{ detailScreen.render(selectedAircraft, selectedRoute); },
     []{},
     [](uint16_t, uint16_t) { return detailReturnMode; } },
 

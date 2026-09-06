@@ -1,5 +1,6 @@
 #include "core/NetTask.h"
 #include "core/DataLock.h"
+#include <string.h>
 
 // 10 KB de stack. El handshake TLS de WiFiClientSecure es lo que más pide
 // (mbedTLS arma los buffers de sesión ahí adentro); con los 4 KB del default la
@@ -43,6 +44,18 @@ bool NetTask::request(NetJob job, const GeoUtils::BBox& box) {
   return true;
 }
 
+bool NetTask::requestRoute(const char* icao24) {
+  if (_busy) return false;
+
+  strncpy(_routeIcao24, icao24, sizeof(_routeIcao24) - 1);
+  _routeIcao24[sizeof(_routeIcao24) - 1] = '\0';
+
+  _job = NetJob::Route;
+  _busy = true;
+  xSemaphoreGive(_wakeup);
+  return true;
+}
+
 void NetTask::run() {
   for (;;) {
     xSemaphoreTake(_wakeup, portMAX_DELAY);
@@ -66,6 +79,13 @@ void NetTask::run() {
       if (_news.refresh()) _refreshed = true;
     } else if (job == NetJob::Weather) {
       if (_weather.refresh()) _refreshed = true;
+    } else if (job == NetJob::Route) {
+      RouteInfo route;
+      if (_os.fetchRoute(_routeIcao24, route)) {
+        DataLock::Guard g;
+        _routeResult = route;
+        _hasRoute = true;
+      }
     }
 
     _busy = false;
@@ -85,5 +105,14 @@ bool NetTask::takeAircraft(std::vector<AircraftState>& out) {
 bool NetTask::takeRefreshed() {
   if (!_refreshed) return false;
   _refreshed = false;
+  return true;
+}
+
+bool NetTask::takeRoute(RouteInfo& out) {
+  if (!_hasRoute) return false;
+
+  DataLock::Guard g;
+  out = _routeResult;
+  _hasRoute = false;
   return true;
 }

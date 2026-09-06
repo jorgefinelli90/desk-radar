@@ -22,7 +22,7 @@
 // El ESP32 tiene dos núcleos y el firmware usaba uno solo. Ahora el loop pide
 // trabajo y sigue dibujando a 22 fps mientras la tarea del core 0 espera a la
 // API.
-enum class NetJob : uint8_t { Aircraft, News, Weather };
+enum class NetJob : uint8_t { Aircraft, News, Weather, Route };
 
 class NetTask {
   public:
@@ -37,6 +37,12 @@ class NetTask {
     // mismo y con datos más nuevos.
     bool request(NetJob job, const GeoUtils::BBox& box = GeoUtils::BBox{0, 0, 0, 0});
 
+    // Pedido de ruta (origen/destino) para un avion puntual, identificado por
+    // icao24. Aparte de request() porque necesita un string en vez de un bbox;
+    // comparte el mismo "un pedido por vez" (devuelve false si la tarea esta
+    // ocupada).
+    bool requestRoute(const char* icao24);
+
     bool busy() const { return _busy; }
 
     // Si la tarea dejó aviones nuevos, los pasa a `out` y devuelve true. El
@@ -46,6 +52,12 @@ class NetTask {
     // true una sola vez, cuando terminó un refresh de noticias o de clima y hay
     // que volver a dibujar la pantalla.
     bool takeRefreshed();
+
+    // Si la tarea dejó una ruta lista, la pasa a `out` (copia: es un struct
+    // chico, no un vector) y devuelve true. El llamador tiene que comparar
+    // out.icao24 contra el avión que está mirando: para cuando la respuesta
+    // llega, el usuario puede haber pasado a ver otro.
+    bool takeRoute(RouteInfo& out);
 
   private:
     OpenSkyClient& _os;
@@ -63,9 +75,13 @@ class NetTask {
 
     NetJob          _job = NetJob::Aircraft;
     GeoUtils::BBox  _box{0, 0, 0, 0};
+    char            _routeIcao24[7] = {0}; // para NetJob::Route
 
     // Buzón de aviones ya parseados, esperando a que el loop los recoja.
     std::vector<AircraftState> _inbox;
+
+    volatile bool _hasRoute = false;
+    RouteInfo     _routeResult;
 
     static void trampoline(void* self);
     void run();

@@ -21,6 +21,7 @@
 #include "utils/StrUtils.h"
 #include "services/OpenSkyClient.h"
 #include "config.h"
+#include "utils/AirportUtils.h"
 
 // Sin init(): textWidth() resuelve por tablas de ancho de la fuente y no toca
 // el bus SPI, asi que estos tests corren aunque no haya pantalla conectada.
@@ -310,6 +311,27 @@ void test_backoff_no_pasa_el_techo(void) {
                            OpenSkyClient::nextBackoffMs(cerca_del_techo));
 }
 
+// --- airportLabel ------------------------------------------------------------
+// Nombre legible de un ICAO de aeropuerto, para la linea de ruta en Detail.
+
+void test_airportLabel_conoce_los_tres_aeropuertos_fijos(void) {
+  TEST_ASSERT_EQUAL_STRING("Ezeiza",     airportLabel("SAEZ").c_str());
+  TEST_ASSERT_EQUAL_STRING("Aeroparque", airportLabel("SABE").c_str());
+  TEST_ASSERT_EQUAL_STRING("El Palomar", airportLabel("SADP").c_str());
+}
+
+// Un aeropuerto que no esta en AIRPORTS (config.h) se muestra tal cual: mejor
+// un codigo ICAO que nada, y no vale la pena una base completa de aeropuertos
+// para un dato de mas en una ficha.
+void test_airportLabel_desconocido_devuelve_el_codigo(void) {
+  TEST_ASSERT_EQUAL_STRING("SCEL", airportLabel("SCEL").c_str());
+}
+
+void test_airportLabel_vacio_o_nulo_es_signo_de_pregunta(void) {
+  TEST_ASSERT_EQUAL_STRING("?", airportLabel("").c_str());
+  TEST_ASSERT_EQUAL_STRING("?", airportLabel(nullptr).c_str());
+}
+
 void setup() {
   delay(2000);
   UNITY_BEGIN();
@@ -352,6 +374,10 @@ void setup() {
   RUN_TEST(test_backoff_arranca_en_el_piso_configurado);
   RUN_TEST(test_backoff_se_duplica_en_cada_429);
   RUN_TEST(test_backoff_no_pasa_el_techo);
+
+  RUN_TEST(test_airportLabel_conoce_los_tres_aeropuertos_fijos);
+  RUN_TEST(test_airportLabel_desconocido_devuelve_el_codigo);
+  RUN_TEST(test_airportLabel_vacio_o_nulo_es_signo_de_pregunta);
 
   UNITY_END();
 }
