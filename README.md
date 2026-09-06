@@ -9,12 +9,28 @@ Además tiene una sección **Más info** con los titulares del día en Argentina
 ([GNews](https://gnews.io/)) y el clima actual de tu ubicación
 ([Open-Meteo](https://open-meteo.com/)).
 
-Se configura entero desde el navegador (sin recompilar) y se actualiza por
-WiFi una vez instalado — ver [Configuración inicial](#configuración-inicial)
-y [Actualizar por WiFi](#actualizar-por-wifi-ota).
+## Características
+
+- 📡 **Radar circular** en tiempo real sobre un mapa real de tu zona, con
+  barrido animado y alerta de tráfico cercano.
+- 🗺️ **Mapa realista** con los aviones coloreados por altitud, zoom 80/40 km.
+- ✈️ **Ficha de detalle** por avión: distancia, rumbo, altitud, velocidad y
+  **ruta estimada** (origen → destino) vía OpenSky.
+- 🛬 **Modo Aeropuertos**: tráfico bajo cerca de Ezeiza, Aeroparque o El Palomar.
+- 📰🌤️ **Noticias y clima** de tu zona (GNews + Open-Meteo).
+- 🌐 **Se configura entero desde el navegador**, sin recompilar ni tocar
+  código: WiFi y API keys se cargan por un portal cautivo la primera vez.
+- 🔄 **Se actualiza por WiFi (OTA)**: subís un `firmware.bin` nuevo desde
+  `desk-radar.local/update` y el dispositivo se reinicia solo, sin cable —
+  ver [Actualizar por WiFi](#actualizar-por-wifi-ota).
+- 🔒 Panel web opcionalmente protegido con PIN, TLS validado contra las tres
+  APIs, y 53 tests automáticos.
+
+Ver [Configuración inicial](#configuración-inicial) para arrancar.
 
 ## Índice
 
+- [Características](#características)
 - [Hardware](#hardware)
 - [Wiring (confirmado)](#wiring-confirmado)
 - [Setup](#setup)
