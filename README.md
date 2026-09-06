@@ -220,7 +220,8 @@ a `0`.
   de nuevo en cualquier lado y volvés al radar.
 - **Modo Aeropuertos**: lista de tráfico con altitud baja (<3000m) cerca de
   Ezeiza (SAEZ), Aeroparque (SABE) o El Palomar (SADP). Un botón en la parte
-  inferior ("Siguiente aeropuerto >") rota entre los 3.
+  inferior ("Siguiente aeropuerto >") rota entre los 3. Tocar una fila abre la
+  ficha del avión, igual que en Radar y Mapa.
 - **Más info**: sub-menú con dos botones táctiles, "NOTICIAS" y "CLIMA".
 - **Pantalla Noticias**: los 5 titulares más recientes de Argentina (GNews,
   `country=ar&lang=es`). Cada fila muestra el titular partido en hasta dos

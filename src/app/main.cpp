@@ -337,8 +337,11 @@ static const ModeOps MODE_OPS[] = {
         aircraft.clear(); // otro aeropuerto: los que hay son de otra zona
         fetchForCurrentMode();
         renderCurrentMode();
+        return Mode::Airports;
       }
-      return Mode::Airports;
+      // UX-2: era la unica de las tres pantallas de aviones donde tocar la
+      // fila no hacia nada. Mismo patron que Radar y Mapa.
+      return openDetailFrom(airportScreen.hitTest(x, y));
     } },
 
   // La ficha queda congelada para leerla tranquilo: no refresca sola (needs

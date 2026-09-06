@@ -32,6 +32,7 @@ void AirportScreen::render(const AirportDef& airport,
   tft.setTextDatum(TL_DATUM);
   int y = 24;
   const int rowH = 34;
+  _rowCount = 0;
 
   if (relevant.empty()) {
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
@@ -53,6 +54,14 @@ void AirportScreen::render(const AirportDef& airport,
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
     tft.drawString(info, 8, y + 20, 1);
 
+    // Zona tocable de la fila. Ancho completo: con touch resistivo y dedo,
+    // acertarle a una fila de 34 px de alto sin eso es puntería inutil.
+    if (_rowCount < MAX_ROWS) {
+      _rows[_rowCount] = { 0, y, (int)tft.width(), rowH };
+      _rowAircraft[_rowCount] = *a; // copia: el vector aircraft puede cambiar
+      _rowCount++;
+    }
+
     y += rowH;
   }
 
@@ -63,4 +72,11 @@ void AirportScreen::render(const AirportDef& airport,
   tft.setTextColor(TFT_CYAN, TFT_NAVY);
   String nextLabel = String(airport.icao) + "   Siguiente aeropuerto >";
   tft.drawString(nextLabel, tft.width() / 2, _nextBtn.y + _nextBtn.h / 2, 2);
+}
+
+const AircraftState* AirportScreen::hitTest(uint16_t x, uint16_t y) const {
+  for (int i = 0; i < _rowCount; i++) {
+    if (_rows[i].contains(x, y)) return &_rowAircraft[i];
+  }
+  return nullptr;
 }
