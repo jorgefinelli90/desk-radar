@@ -208,6 +208,15 @@ void WebPortal::handleRoot() {
   }
   body += "</td></tr>";
 
+  body += "<tr><td>Requests OpenSky hoy</td><td>";
+  body += String(_opensky.requestsToday());
+  body += " <span class=\"hint\" style=\"display:inline\">(se reinicia a las 00:00 hora local)</span></td></tr>";
+
+  if (_opensky.isBackingOff()) {
+    body += "<tr><td>OpenSky</td><td><span class=\"bad\">Cupo agotado (429): reintenta en " +
+            String(_opensky.backoffRemainingS()) + " s</span></td></tr>";
+  }
+
   body += "<tr><td>Heap libre</td><td>" + String(ESP.getFreeHeap() / 1024) + " KB</td></tr>";
 
   // El bloque contiguo mas grande es la medida real de fragmentacion: el heap

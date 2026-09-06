@@ -35,7 +35,7 @@ TouchManager   touch(display.tft());
 OpenSkyClient  opensky;      // credenciales desde NVS, ya no del compilador
 NewsClient     newsClient;   // idem
 WeatherClient  weatherClient;
-WebPortal      webPortal(display, deviceConfig);
+WebPortal      webPortal(display, deviceConfig, opensky);
 // Toda la red vive en el core 0: el loop pide y sigue dibujando (ver NetTask.h)
 NetTask        netTask(opensky, newsClient, weatherClient);
 Banner         banner(display);
@@ -518,6 +518,12 @@ static void refreshDataFor(const ModeOps& ops) {
     }
   }
 }
+// UNIT_TEST la define PlatformIO solo al compilar para "pio test": el test
+// runner pone su propio setup()/loop() (el que arranca UNITY_BEGIN), y sin este
+// guard esta pareja chocaba con la de ahi por "multiple definition". El resto
+// de este archivo -los objetos globales, la tabla MODE_OPS, los helpers- se
+// sigue compilando igual: no declaran setup()/loop() y no generan conflicto.
+#ifndef UNIT_TEST
 void setup() {
   Serial.begin(115200);
   display.begin();
@@ -633,3 +639,4 @@ void loop() {
 
   delay(ops->loopDelayMs);
 }
+#endif  // UNIT_TEST

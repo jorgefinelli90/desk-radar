@@ -4,6 +4,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <time.h>
 #include "utils/StrUtils.h"
 
 bool OpenSkyClient::ensureToken() {
@@ -88,7 +89,29 @@ bool OpenSkyClient::requestNewToken() {
 // lista ya vaciada: el radar se quedaba pelado 30 segundos por un error de red
 // que habia durado un instante. Ahora se llena un vector aparte y se cambia por
 // el del llamador de una sola vez, al final del todo.
+uint32_t OpenSkyClient::nextBackoffMs(uint32_t currentMs) {
+  if (currentMs == 0) return OPENSKY_BACKOFF_START_MS;
+  uint32_t doubled = currentMs * 2;
+  return doubled > OPENSKY_BACKOFF_MAX_MS ? OPENSKY_BACKOFF_MAX_MS : doubled;
+}
+
+// Dia local en curso, como numero de dias desde el epoch (no calendario real,
+// solo sirve para comparar "es el mismo dia que la ultima vez"). Devuelve 0 si
+// todavia no hay hora de NTP: sin eso no se puede saber cuando es medianoche,
+// asi que el contador sigue sumando en vez de resetear a ciegas.
+static uint32_t localDayNumber() {
+  time_t now = time(nullptr);
+  if (now < 1700000000) return 0; // ver Clock.cpp: misma marca de "hora creible"
+  return (uint32_t)((now + TZ_OFFSET_H * 3600) / 86400);
+}
+
 bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftState>& out) {
+  // En cuarentena por un 429 reciente: ni siquiera se intenta. No cuenta como
+  // request (no se toco la red) y no cuesta el pedido de token de vuelta.
+  if (isBackingOff()) {
+    return false;
+  }
+
   if (!ensureToken()) {
     return false;
   }
@@ -111,12 +134,35 @@ bool OpenSkyClient::fetchStates(const GeoUtils::BBox& box, std::vector<AircraftS
 
   http.addHeader("Authorization", "Bearer " + _accessToken);
 
+  // Rollover del contador diario, justo antes de gastar la request: si el dia
+  // cambio mientras estabamos en backoff, el contador nuevo arranca en limpio.
+  uint32_t day = localDayNumber();
+  if (day != 0 && day != _dayNumber) {
+    _dayNumber = day;
+    _requestsToday = 0;
+  }
+
   int code = http.GET();
+  _requestsToday++; // se cuenta el intento, haya salido bien o mal: los dos gastan cupo
+
+  if (code == 429) {
+    _backoffMs = nextBackoffMs(_backoffMs);
+    _backoffUntilMs = millis() + _backoffMs;
+    Serial.printf("[OpenSky] 429 (cupo agotado): backoff de %u s\n",
+                  (unsigned)(_backoffMs / 1000));
+    http.end();
+    return false;
+  }
+
   if (code != 200) {
     Serial.printf("[OpenSky] Error pidiendo states, HTTP %d\n", code);
     http.end();
     return false;
   }
+
+  // Salio bien: se termino cualquier cuarentena que hubiera.
+  _backoffMs = 0;
+  _backoffUntilMs = 0;
 
   // OpenSky responde con Transfer-Encoding: chunked, y HTTPClient::getStream()
   // entrega el socket TCP crudo: los headers de chunk ("16c5\r\n...") viajan

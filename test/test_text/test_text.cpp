@@ -20,6 +20,7 @@
 #include "utils/TextUtils.h"
 #include "utils/StrUtils.h"
 #include "services/OpenSkyClient.h"
+#include "config.h"
 
 // Sin init(): textWidth() resuelve por tablas de ancho de la fuente y no toca
 // el bus SPI, asi que estos tests corren aunque no haya pantalla conectada.
@@ -275,6 +276,40 @@ void test_un_avion_recien_declarado_no_tiene_basura(void) {
   TEST_ASSERT_EQUAL_STRING("", a.label());
 }
 
+// --- OpenSkyClient::nextBackoffMs -------------------------------------------
+// El backoff del 429 (SEC-3). Se factorizo en una funcion estatica pura
+// justamente para poder testear la aritmetica sin depender de millis() ni de
+// una request real.
+
+void test_backoff_arranca_en_el_piso_configurado(void) {
+  TEST_ASSERT_EQUAL_UINT32(OPENSKY_BACKOFF_START_MS,
+                           OpenSkyClient::nextBackoffMs(0));
+}
+
+void test_backoff_se_duplica_en_cada_429(void) {
+  uint32_t b = OpenSkyClient::nextBackoffMs(0);
+  TEST_ASSERT_EQUAL_UINT32(OPENSKY_BACKOFF_START_MS, b);
+
+  b = OpenSkyClient::nextBackoffMs(b);
+  TEST_ASSERT_EQUAL_UINT32(OPENSKY_BACKOFF_START_MS * 2, b);
+
+  b = OpenSkyClient::nextBackoffMs(b);
+  TEST_ASSERT_EQUAL_UINT32(OPENSKY_BACKOFF_START_MS * 4, b);
+}
+
+// El caso que importa: sin este techo, una racha larga de 429 duplicaria hasta
+// desbordar el uint32_t, o en el mejor caso dejaria al radar esperando horas.
+void test_backoff_no_pasa_el_techo(void) {
+  TEST_ASSERT_EQUAL_UINT32(OPENSKY_BACKOFF_MAX_MS,
+                           OpenSkyClient::nextBackoffMs(OPENSKY_BACKOFF_MAX_MS));
+
+  // Un valor que al duplicarse se pasaria del techo tiene que quedar
+  // exactamente en el techo, no en el doble.
+  uint32_t cerca_del_techo = OPENSKY_BACKOFF_MAX_MS - 1000;
+  TEST_ASSERT_EQUAL_UINT32(OPENSKY_BACKOFF_MAX_MS,
+                           OpenSkyClient::nextBackoffMs(cerca_del_techo));
+}
+
 void setup() {
   delay(2000);
   UNITY_BEGIN();
@@ -313,6 +348,10 @@ void setup() {
   RUN_TEST(test_la_etiqueta_prefiere_el_callsign);
   RUN_TEST(test_sin_callsign_la_etiqueta_es_el_icao);
   RUN_TEST(test_un_avion_recien_declarado_no_tiene_basura);
+
+  RUN_TEST(test_backoff_arranca_en_el_piso_configurado);
+  RUN_TEST(test_backoff_se_duplica_en_cada_429);
+  RUN_TEST(test_backoff_no_pasa_el_techo);
 
   UNITY_END();
 }

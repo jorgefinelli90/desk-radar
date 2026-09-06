@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include "core/DeviceConfig.h"
 #include "core/DisplayManager.h"
+#include "services/OpenSkyClient.h"
 
 // Portal de configuración y dashboard local.
 //
@@ -21,8 +22,12 @@
 // que pasar el mensaje a la pantalla no necesita ni cola ni mutex.
 class WebPortal {
   public:
-    WebPortal(DisplayManager& display, DeviceConfig& cfg)
-      : _display(display), _cfg(cfg) {}
+    // opensky es una referencia y no una copia: WebPortal solo LEE sus
+    // metricas (requestsToday, isBackingOff) para el dashboard, nunca hace un
+    // fetch. Ver el comentario en OpenSkyClient.h sobre por que esa lectura
+    // entre nucleos no necesita DataLock.
+    WebPortal(DisplayManager& display, DeviceConfig& cfg, OpenSkyClient& opensky)
+      : _display(display), _cfg(cfg), _opensky(opensky) {}
 
     // Modo AP + portal cautivo. No vuelve: el ESP32 se reinicia cuando el
     // usuario guarda la configuración. Se llama desde setup(), no del loop.
@@ -66,6 +71,7 @@ class WebPortal {
   private:
     DisplayManager& _display;
     DeviceConfig&   _cfg;
+    OpenSkyClient&  _opensky;
     WebServer       _server{80};
     DNSServer       _dns;
 

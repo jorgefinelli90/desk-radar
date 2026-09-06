@@ -331,6 +331,15 @@ y los `.bin` dejaron de ser del mismo lugar.
 Al terminar, la placa queda con el firmware de test: volvé a subir el real con
 `pio run -t upload`.
 
+`platformio.ini` tiene `test_build_src = yes`: sin eso, `pio test` no compila
+los `.cpp` de `src/` y sólo linkea lo que ya era header-only, así que un test
+que referencia algo definido en un `.cpp` real (como
+`OpenSkyClient::nextBackoffMs`) falla el link con "undefined reference" sin
+ningún error de compilación que lo explique. Y como eso compila **todo**
+`src/`, incluido `main.cpp`, su `setup()`/`loop()` chocan con los del test
+runner ("multiple definition") — de ahí el `#ifndef UNIT_TEST` que los rodea:
+`UNIT_TEST` es la macro que PlatformIO define solo al compilar para test.
+
 ## Estructura anterior (referencia)
 
 ```
@@ -522,6 +531,17 @@ están en RAM.
 | Radar / Mapa / Aeropuertos | [OpenSky Network](https://opensky-network.org/) | OAuth2 client id + secret | gratis para uso personal |
 | Noticias | [GNews.io](https://gnews.io/) | sí (`GNEWS_API_KEY`) | 100 requests/día, **sin tarjeta de crédito** |
 | Clima | [Open-Meteo](https://open-meteo.com/) | **no hace falta** | libre para uso no comercial |
+
+### Backoff y contador de OpenSky
+
+`REFRESH_FAST_MS` es 5 segundos: con tráfico cerca de casa son 720 requests por
+hora. El panel muestra **"Requests OpenSky hoy"** (se reinicia a las 00:00 hora
+local, necesita NTP) para poder mirarlo contra tu cupo.
+
+Si OpenSky devuelve **429**, el cliente entra en backoff exponencial —arranca en
+1 minuto y se duplica en cada 429 sucesivo hasta un techo de 30 minutos— en vez
+de seguir golpeando al mismo ritmo. Un fetch bueno lo resetea a cero. Mientras
+dura, el panel muestra cuánto falta para el próximo intento.
 
 ### Cómo conseguir la API key de GNews (gratis)
 

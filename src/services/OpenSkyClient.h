@@ -42,12 +42,46 @@ class OpenSkyClient {
     // Pide un token nuevo si no hay uno vigente. Devuelve false si falla.
     bool ensureToken();
 
-    // Trae aviones dentro de un bounding box. Devuelve false si falla la request.
+    // Trae aviones dentro de un bounding box. Devuelve false si falla la request,
+    // incluido el caso en que ni siquiera se intenta por estar en backoff (ver
+    // isBackingOff()).
     bool fetchStates(const GeoUtils::BBox& box, std::vector<AircraftState>& out);
+
+    // --- Metricas para el dashboard --------------------------------------
+    // volatile y no bajo DataLock: son enteros de 32 bits alineados, y en el
+    // ESP32 esa lectura/escritura ya es atomica a nivel de bus. No hace falta
+    // el candado que si necesita la lista de aviones (un vector no se puede
+    // leer a mitad de un swap sin corromperse; un uint32 si). El peor caso es
+    // leer un valor de un instante antes, que para un contador informativo no
+    // importa. Mismo patron que _busy/_hasData en NetTask.
+
+    // Cuantas veces se golpeo /states/all hoy. Se resetea a las 00:00 hora
+    // local (necesita NTP: sin hora, sigue sumando sin reiniciar solo).
+    uint32_t requestsToday() const { return _requestsToday; }
+
+    // true mientras estamos en cuarentena por un 429 reciente.
+    bool isBackingOff() const {
+      return _backoffUntilMs != 0 && (int32_t)(millis() - _backoffUntilMs) < 0;
+    }
+
+    // Segundos que faltan para el proximo intento. 0 si no estamos en backoff.
+    uint32_t backoffRemainingS() const {
+      if (!isBackingOff()) return 0;
+      return (uint32_t)(_backoffUntilMs - millis()) / 1000;
+    }
+
+    // Doblado con techo: 0 -> START, despues x2 hasta MAX. Publico y estatico
+    // para poder testearlo sin necesitar red ni reloj.
+    static uint32_t nextBackoffMs(uint32_t currentMs);
 
   private:
     String  _accessToken;
     uint32_t _tokenExpiresAt = 0; // millis() en el que expira (con margen)
+
+    volatile uint32_t _requestsToday  = 0;
+    uint32_t          _dayNumber      = 0; // dia local en curso, 0 = sin hora todavia
+    volatile uint32_t _backoffMs      = 0; // duracion del backoff actual, 0 = ninguno
+    volatile uint32_t _backoffUntilMs = 0;
 
     bool requestNewToken();
 };

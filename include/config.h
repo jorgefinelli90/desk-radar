@@ -115,6 +115,14 @@ static const uint32_t WEATHER_CACHE_MS = 15UL * 60UL * 1000UL; // 15 min
 // Si una request falla, esperamos esto antes de reintentar (no martillar la API)
 static const uint32_t API_RETRY_MS = 60UL * 1000UL;
 
+// Backoff especifico para el 429 de OpenSky ("cupo agotado"). Sin esto, con
+// REFRESH_FAST_MS en 5s el cliente seguiria golpeando la API al mismo ritmo
+// aunque ya sepamos que esta devolviendo 429 -720 requests por hora contra una
+// API que ya dijo que no-. Arranca en 1 min y se DUPLICA en cada 429 sucesivo
+// hasta un techo de 30 min; un fetch bueno lo resetea a cero.
+static const uint32_t OPENSKY_BACKOFF_START_MS = 60UL * 1000UL;
+static const uint32_t OPENSKY_BACKOFF_MAX_MS   = 30UL * 60UL * 1000UL;
+
 // --- Hora local y NTP ---
 // Argentina es UTC-3 todo el año (no hay horario de verano), así que alcanza un
 // offset fijo y no hace falta arrastrar la base de datos de zonas horarias.
