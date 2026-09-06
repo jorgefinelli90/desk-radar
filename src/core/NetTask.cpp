@@ -2,10 +2,19 @@
 #include "core/DataLock.h"
 #include <string.h>
 
-// 10 KB de stack. El handshake TLS de WiFiClientSecure es lo que más pide
+// 14 KB de stack. El handshake TLS de WiFiClientSecure es lo que más pide
 // (mbedTLS arma los buffers de sesión ahí adentro); con los 4 KB del default la
 // tarea se moría de stack overflow en el primer fetch a OpenSky.
-static const uint32_t NET_STACK_BYTES = 10240;
+//
+// Estaba en 10 KB hasta que el pronóstico extendido del clima (payload más
+// grande, con el bloque "daily" de Open-Meteo) causó un crash con backtrace
+// corrupto en el primer arranque -la firma típica de un stack overflow-, que
+// no se pudo reproducir en 3 reinicios limpios midiendo con
+// uxTaskGetStackHighWaterMark() (~5,3 KB libres de margen en cada uno). No
+// hay certeza de que haya sido esto -pudo ser un hiccup puntual de red/NTP en
+// ese primer arranque-, pero subir el margen sale gratis frente a los 320 KB
+// de RAM totales, así que se sube igual en vez de dejarlo al límite medido.
+static const uint32_t NET_STACK_BYTES = 14336;
 
 // Core 0. El loop de Arduino corre en el core 1, así que la red queda del lado
 // donde ya vive el stack de WiFi y deja al core 1 entero para dibujar.

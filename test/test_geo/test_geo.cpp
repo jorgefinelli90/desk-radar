@@ -23,6 +23,7 @@
 #include "config.h"
 #include "utils/GeoUtils.h"
 #include "utils/GeoMap.h"
+#include "utils/DateUtils.h"
 #include "MapAssets.h"
 
 void setUp(void) {}
@@ -192,6 +193,46 @@ void test_un_punto_lejano_queda_fuera_del_viewport(void) {
   TEST_ASSERT_FALSE(GeoMap::inView(x, y));
 }
 
+// --- DateUtils::dayOfWeek ----------------------------------------------------
+// Le pone nombre a los dias del pronostico extendido del clima. Las cuatro
+// fechas de referencia son hechos verificables por fuera del proyecto, no
+// resultados de la propia formula: 1900-01-01 y 2024-01-01 fueron lunes,
+// 2000-01-01 (el Y2K) fue sabado, y el 29 de febrero de 2024 (bisiesto) fue
+// jueves.
+
+void test_dayOfWeek_1900_01_01_es_lunes(void) {
+  TEST_ASSERT_EQUAL_INT(1, DateUtils::dayOfWeek(1900, 1, 1));
+}
+
+void test_dayOfWeek_2000_01_01_es_sabado(void) {
+  TEST_ASSERT_EQUAL_INT(6, DateUtils::dayOfWeek(2000, 1, 1));
+}
+
+void test_dayOfWeek_2024_01_01_es_lunes(void) {
+  TEST_ASSERT_EQUAL_INT(1, DateUtils::dayOfWeek(2024, 1, 1));
+}
+
+// El caso importante para probar el ajuste de anio en meses 1-2 (ver el "if
+// (month < 3)" de la formula): un 29 de febrero solo existe en anio bisiesto,
+// y es justo el mes que dispara ese ajuste.
+void test_dayOfWeek_bisiesto_29_febrero_2024_es_jueves(void) {
+  TEST_ASSERT_EQUAL_INT(4, DateUtils::dayOfWeek(2024, 2, 29));
+}
+
+// Siete dias seguidos tienen que dar los siete valores en orden, dando la
+// vuelta de sabado (6) a domingo (0).
+void test_dayOfWeek_una_semana_completa_en_orden(void) {
+  // 2024-01-01 es lunes (indice 1); del 31 de diciembre de 2023 (domingo) al
+  // 6 de enero de 2024 (sabado) es una semana calendario completa.
+  TEST_ASSERT_EQUAL_INT(0, DateUtils::dayOfWeek(2023, 12, 31)); // Dom
+  TEST_ASSERT_EQUAL_INT(1, DateUtils::dayOfWeek(2024, 1, 1));   // Lun
+  TEST_ASSERT_EQUAL_INT(2, DateUtils::dayOfWeek(2024, 1, 2));   // Mar
+  TEST_ASSERT_EQUAL_INT(3, DateUtils::dayOfWeek(2024, 1, 3));   // Mie
+  TEST_ASSERT_EQUAL_INT(4, DateUtils::dayOfWeek(2024, 1, 4));   // Jue
+  TEST_ASSERT_EQUAL_INT(5, DateUtils::dayOfWeek(2024, 1, 5));   // Vie
+  TEST_ASSERT_EQUAL_INT(6, DateUtils::dayOfWeek(2024, 1, 6));   // Sab
+}
+
 void setup() {
   delay(2000); // que el monitor serie alcance a engancharse
   UNITY_BEGIN();
@@ -217,6 +258,12 @@ void setup() {
   RUN_TEST(test_la_casa_cae_en_el_centro_de_cada_mapa);
   RUN_TEST(test_la_casa_cae_en_el_centro_del_disco_del_radar);
   RUN_TEST(test_un_punto_lejano_queda_fuera_del_viewport);
+
+  RUN_TEST(test_dayOfWeek_1900_01_01_es_lunes);
+  RUN_TEST(test_dayOfWeek_2000_01_01_es_sabado);
+  RUN_TEST(test_dayOfWeek_2024_01_01_es_lunes);
+  RUN_TEST(test_dayOfWeek_bisiesto_29_febrero_2024_es_jueves);
+  RUN_TEST(test_dayOfWeek_una_semana_completa_en_orden);
 
   UNITY_END();
 }

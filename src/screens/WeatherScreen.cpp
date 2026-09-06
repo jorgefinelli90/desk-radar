@@ -227,10 +227,15 @@ void WeatherScreen::render(const WeatherClient& weather) {
   row("Humedad", String(w.humidityPct) + " %");
   row("Viento", String((int)lround(w.windKmh)) + " km/h");
 
-  // Pie: hora de la medición que devolvió la API (ya viene en hora local)
+  // Pie: hora de la medición y la pista de que se puede tocar para el
+  // pronóstico extendido. No hay lugar para una línea aparte (la pantalla ya
+  // está llena hasta el borde), así que va pegado a lo mismo que ya se
+  // mostraba; fitToWidth corta si por algún ancho de fuente no entrara.
   tft.setTextDatum(BC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   String footer = w.observedAt.length() ? ("Medido a las " + w.observedAt)
                                         : String("Datos del ultimo refresco");
-  tft.drawString(footer, tft.width() / 2, tft.height() - 5, 1);
+  if (w.dailyCount > 0) footer += "  -  toca: " + String(w.dailyCount) + " dias";
+  tft.drawString(TextUtils::fitToWidth(tft, footer, tft.width() - 8, 1),
+                 tft.width() / 2, tft.height() - 5, 1);
 }

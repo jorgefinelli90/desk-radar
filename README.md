@@ -17,14 +17,15 @@ Además tiene una sección **Más info** con los titulares del día en Argentina
 - ✈️ **Ficha de detalle** por avión: distancia, rumbo, altitud, velocidad y
   **ruta estimada** (origen → destino) vía OpenSky.
 - 🛬 **Modo Aeropuertos**: tráfico bajo cerca de Ezeiza, Aeroparque o El Palomar.
-- 📰🌤️ **Noticias y clima** de tu zona (GNews + Open-Meteo).
+- 📰🌤️ **Noticias y clima** de tu zona (GNews + Open-Meteo), con **pronóstico
+  extendido** de hasta 5 días.
 - 🌐 **Se configura entero desde el navegador**, sin recompilar ni tocar
   código: WiFi y API keys se cargan por un portal cautivo la primera vez.
 - 🔄 **Se actualiza por WiFi (OTA)**: subís un `firmware.bin` nuevo desde
   `desk-radar.local/update` y el dispositivo se reinicia solo, sin cable —
   ver [Actualizar por WiFi](#actualizar-por-wifi-ota).
 - 🔒 Panel web opcionalmente protegido con PIN, TLS validado contra las tres
-  APIs, y 53 tests automáticos.
+  APIs, y 58 tests automáticos.
 
 Ver [Configuración inicial](#configuración-inicial) para arrancar.
 
@@ -285,6 +286,9 @@ a `0`.
   viento para `HOME_LAT`/`HOME_LON`, con un ícono dibujado a mano con
   primitivas de TFT_eSPI (sol, nubes, lluvia, nieve, niebla, tormenta) según
   el código WMO que devuelve Open-Meteo. No se descarga ninguna imagen.
+  Tocá la pantalla para el **pronóstico extendido** (hasta 5 días, hoy
+  incluido): día, condición y máxima/mínima. Viene en la misma request que el
+  clima actual, así que no cuesta una llamada más a la API.
 - **Cache**: noticias y clima se guardan en RAM y no se vuelven a pedir
   mientras el cache siga vigente (20 y 15 minutos respectivamente, en
   `config.h`). Si una request falla, se reintenta recién al minuto en vez de
@@ -335,6 +339,7 @@ src/
 |   |-- NewsScreen.{h,cpp}
 |   |-- RadarScreen.{h,cpp}
 |   |-- SettingsScreen.{h,cpp}
+|   |-- WeatherForecastScreen.{h,cpp} # pronostico extendido, se abre desde Clima
 |   `-- WeatherScreen.{h,cpp}
 |-- services/
 |   |-- MapTiles.{h,cpp}          # mapas raster en LittleFS
@@ -343,6 +348,7 @@ src/
 |   `-- WeatherClient.{h,cpp}     # clima y cache
 |-- utils/
 |   |-- AirportUtils.h            # nombre legible para un ICAO de aeropuerto
+|   |-- DateUtils.h               # dia de semana de una fecha, sin tocar time.h
 |   |-- StrUtils.h                # copia a buffers fijos, sin dependencias
 |   |-- GeoMap.h                  # proyeccion geografica
 |   |-- GeoUtils.h                # calculos geograficos
@@ -359,7 +365,8 @@ headers-puente: el único archivo suelto es `MapAssets.h`, que es generado.
 
 ```
 test/
-|-- test_geo/                     # GeoUtils (haversine, rumbo, bbox) y GeoMap
+|-- test_geo/                     # GeoUtils (haversine, rumbo, bbox), GeoMap
+                                   # y DateUtils
 `-- test_text/                    # TextUtils, StrUtils, AirportUtils y
                                    # OpenSkyClient::nextBackoffMs
 ```
@@ -367,7 +374,7 @@ test/
 Se corren **sobre la placa**, con el cable puesto:
 
 ```bash
-pio test -e esp32dev              # las dos suites (53 tests)
+pio test -e esp32dev              # las dos suites (58 tests)
 pio test -e esp32dev -f test_geo  # solo una
 ```
 
@@ -377,8 +384,9 @@ aparece sobre la calle equivocada. Cubren los valores de referencia externos
 (un grado de latitud, antípodas), las distancias y rumbos reales a los tres
 aeropuertos, la coherencia entre la proyección del firmware y el mapa generado
 (`test_la_casa_cae_en_el_centro_de_cada_mapa` falla si `MapAssets.h` y los
-`.bin` dejaron de ser del mismo lugar), y la aritmética del backoff de
-OpenSky.
+`.bin` dejaron de ser del mismo lugar), la aritmética del backoff de OpenSky,
+y el día de la semana de una fecha calendario contra hechos verificables por
+fuera del proyecto (1900-01-01 y 2024-01-01 fueron lunes, el Y2K fue sábado).
 
 Al terminar, la placa queda con el firmware de test: volvé a subir el real con
 `pio run -t upload`.
@@ -606,7 +614,7 @@ dos `String` por avión eran unos **120 malloc/free cada 5 a 30 segundos**, más
 los que agregaban las copias de `AircraftBlip` y el `std::sort`. En una pantalla
 pensada para quedar encendida semanas eso va picando el heap, y justo las dos
 cosas que más lo necesitan piden bloques **grandes y contiguos**: el sprite del
-radar (20 KB) y el stack de la tarea de red (10 KB).
+radar (20 KB) y el stack de la tarea de red (14 KB).
 
 Por eso el dashboard muestra ahora **"Bloque contiguo mayor"** además del heap
 libre: es la medida real de fragmentación. El heap puede tener 150 KB libres
@@ -678,8 +686,10 @@ nada más**: el barrido se congelaba, el touch no respondía y el dashboard no
 atendía. El cartel "Buscando aviones..." existía sólo para tapar eso.
 
 Ahora `src/core/NetTask` corre en el **core 0** (donde ya vive el stack de WiFi)
-con 10 KB de stack — el handshake TLS es lo que más pide; con los 4 KB del
-default la tarea se muere en el primer fetch. El loop pide trabajo con
+con 14 KB de stack — el handshake TLS es lo que más pide; con los 4 KB del
+default la tarea se muere en el primer fetch (ver también
+[Pronóstico extendido](#pronóstico-extendido-mismo-request-y-el-stack-de-la-red-subió),
+que fue lo que subió el número de 10 a 14). El loop pide trabajo con
 `request()` y sigue dibujando; el resultado se recoge en `netTick()`, que no
 bloquea nunca.
 
@@ -949,6 +959,29 @@ Probado contra la API real: para un avión sin callsign visto en el radar,
 `estDepartureAirport=SABE` (Aeroparque) sin destino todavía — la ficha muestra
 "Aeroparque -> ?" en ese caso, mejor que no mostrar nada.
 
+### Pronóstico extendido: mismo request, y el stack de la red subió
+
+Igual que la ruta de un avión, el pronóstico de 5 días **no es una request
+aparte**: va en el mismo `&daily=...` que ya le pide Open-Meteo el clima
+actual (`WeatherClient::refresh()`), así que mostrarlo no cuesta una llamada
+más a la API. Open-Meteo no manda el día de la semana, sólo la fecha
+(`"2026-09-05"`); `DateUtils::dayOfWeek()` lo calcula con el algoritmo de
+Zeller, una función pura sin tocar `time.h` — el día de una fecha calendario
+no depende de la hora del sistema ni de NTP, así que no hace falta arrastrar
+esa dependencia (ni sus casos borde de zona horaria) para lo que es aritmética
+pura. Eso de paso lo hace testeable sin reloj.
+
+Agregar este bloque hizo la respuesta de Open-Meteo bastante más grande (4
+arrays más, hasta 5 elementos cada uno), y en el primer arranque de prueba la
+tarea de red murió con un `Guru Meditation Error` de backtrace corrupto —la
+firma típica de un stack overflow— con los 10 KB de stack que traía desde
+antes. No se pudo reproducir en 3 reinicios limpios midiendo con
+`uxTaskGetStackHighWaterMark()` (~5,3 KB libres en cada uno), así que no hay
+certeza de que haya sido eso exactamente; pudo ser un problema puntual de
+red/NTP en ese primer arranque. De cualquier forma, subir el margen sale
+gratis frente a los 320 KB de RAM totales del ESP32, así que el stack de la
+tarea de red pasó de 10 a 14 KB en vez de dejarlo al límite medido.
+
 ### ⚠️ Leer el body con `getString()`, nunca con `getStream()`
 
 Las tres APIs (OpenSky, GNews y Open-Meteo) responden con
@@ -989,8 +1022,6 @@ del payload salen por el monitor serie.
 - Usar el NeoPixel para alertar visualmente cuando hay tráfico muy cerca.
 - Cachear también los resultados de OpenSky, para no gastar cupo si dos modos
   piden zonas solapadas (Noticias y Clima ya cachean).
-- Pronóstico extendido en la pantalla de Clima: Open-Meteo devuelve los
-  próximos días en la misma request, solo falta dibujarlos.
 
 ## Licencia
 

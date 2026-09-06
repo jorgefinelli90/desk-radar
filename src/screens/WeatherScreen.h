@@ -8,6 +8,11 @@ class WeatherScreen {
 
     void render(const WeatherClient& weather);
 
+    // Color segun temperatura (frio->cyan, calor->rojo). Publico porque
+    // WeatherForecastScreen lo reusa para colorear los maximos del pronostico:
+    // es la paleta de "esta pantalla", no una utilidad generica de proyecto.
+    static uint16_t tempColor(double c);
+
   private:
     DisplayManager& _display;
 
@@ -18,6 +23,4 @@ class WeatherScreen {
     static void drawDrops(TFT_eSPI& tft, int cx, int cy, int count, int len, uint16_t color);
     static void drawFlakes(TFT_eSPI& tft, int cx, int cy, uint16_t color);
     static void drawBolt(TFT_eSPI& tft, int cx, int cy, uint16_t color);
-
-    static uint16_t tempColor(double c);
 };

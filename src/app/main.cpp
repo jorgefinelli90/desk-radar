@@ -26,9 +26,10 @@
 #include "screens/NewsDetailScreen.h"
 #include "services/WeatherClient.h"
 #include "screens/WeatherScreen.h"
+#include "screens/WeatherForecastScreen.h"
 
 enum class Mode { Home, Radar, Airports, Map, Detail, InfoMenu, News, NewsDetail,
-                  Weather, Settings };
+                  Weather, WeatherForecast, Settings };
 
 DisplayManager display;
 Clock          deviceClock;   // NTP; la barra de estado lo consulta via display
@@ -53,6 +54,7 @@ InfoMenuScreen infoMenuScreen(display);
 NewsScreen     newsScreen(display);
 NewsDetailScreen newsDetailScreen(display);
 WeatherScreen  weatherScreen(display);
+WeatherForecastScreen weatherForecastScreen(display);
 
 Mode currentMode = Mode::Home;
 Mode detailReturnMode = Mode::Radar; // a qué pantalla volver al salir del Detail
@@ -419,6 +421,16 @@ static const ModeOps MODE_OPS[] = {
   { Mode::Weather, DataNeed::Weather, true, 30,
     []{}, []{},
     []{ DataLock::Guard g; weatherScreen.render(weatherClient); },
+    []{},
+    // Tocar el cuerpo abre el pronostico extendido. No hace falta un fetch
+    // aparte: el pronostico ya vino en la misma request (ver WeatherClient).
+    [](uint16_t, uint16_t) { return Mode::WeatherForecast; } },
+
+  // Congelada como Detail/NewsDetail: no refresca sola (needs None) y
+  // cualquier toque vuelve a Clima, no a Home.
+  { Mode::WeatherForecast, DataNeed::None, false, 30,
+    []{}, []{},
+    []{ DataLock::Guard g; weatherForecastScreen.render(weatherClient.now()); },
     []{},
     [](uint16_t, uint16_t) { return Mode::Weather; } },
 

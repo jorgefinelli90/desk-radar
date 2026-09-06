@@ -1,9 +1,11 @@
 #include "services/WeatherClient.h"
 #include "config.h"
 #include "core/DataLock.h"
+#include "utils/DateUtils.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <stdio.h>
 
 // Tabla WMO de Open-Meteo agrupada en las categorías que sabemos dibujar.
 // Los textos van sin acentos a propósito: las fuentes de TFT_eSPI son ASCII.
@@ -66,12 +68,14 @@ bool WeatherClient::refresh() {
   client.setCACert(TLS_ROOT_CA_PEM);
 
   HTTPClient http;
-  char url[320];
+  char url[400];
   snprintf(url, sizeof(url),
     "%s?latitude=%.4f&longitude=%.4f"
     "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m"
+    "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+    "&forecast_days=%d"
     "&timezone=auto",
-    OPENMETEO_URL, HOME_LAT, HOME_LON);
+    OPENMETEO_URL, HOME_LAT, HOME_LON, WEATHER_FORECAST_DAYS);
 
   if (!http.begin(client, url)) {
     _lastError = "Sin conexion";
@@ -125,6 +129,46 @@ bool WeatherClient::refresh() {
   String t = cur["time"].as<String>();
   w.observedAt = (t.length() >= 16) ? t.substring(11, 16) : String("");
 
+  // Pronostico extendido: mismo payload, bloque "daily". Si por lo que sea no
+  // vino (respuesta parcial, cambio de API), dailyCount se queda en 0 y la
+  // pantalla de pronostico simplemente no tiene nada que mostrar; no es motivo
+  // para descartar el clima actual, que ya se parseo bien arriba.
+  JsonObject daily = doc["daily"].as<JsonObject>();
+  if (!daily.isNull()) {
+    JsonArray dates = daily["time"].as<JsonArray>();
+    JsonArray codes = daily["weather_code"].as<JsonArray>();
+    JsonArray maxs  = daily["temperature_2m_max"].as<JsonArray>();
+    JsonArray mins  = daily["temperature_2m_min"].as<JsonArray>();
+
+    int n = dates.size();
+    if (n > WEATHER_FORECAST_DAYS) n = WEATHER_FORECAST_DAYS;
+
+    for (int i = 0; i < n; i++) {
+      WeatherNow::Day d;
+
+      // Open-Meteo manda la fecha ("2026-09-05") pero no el dia de la semana;
+      // DateUtils::dayOfWeek lo calcula sin tocar time.h ni depender de NTP.
+      if (i == 0) {
+        d.label = "Hoy";
+      } else {
+        int y = 0, mo = 0, da = 0;
+        String date = dates[i].as<String>();
+        if (sscanf(date.c_str(), "%d-%d-%d", &y, &mo, &da) == 3) {
+          d.label = DateUtils::WEEKDAY_ABBR[DateUtils::dayOfWeek(y, mo, da)];
+        } else {
+          d.label = "?";
+        }
+      }
+
+      int code = codes[i] | -1;
+      describe(code, d.icon, d.description);
+      d.tempMaxC = maxs[i] | 0.0;
+      d.tempMinC = mins[i] | 0.0;
+
+      w.daily[w.dailyCount++] = d;
+    }
+  }
+
   // Publicacion bajo el candado: esto corre en la tarea de red y el loop puede
   // estar dibujando la pantalla del clima justo ahora (ver NewsClient).
   {
@@ -134,6 +178,7 @@ bool WeatherClient::refresh() {
     _lastError = "";
   }
   _lastOkMs = millis();
-  Serial.printf("[Clima] %.1f C, codigo WMO %d\n", w.tempC, w.wmoCode);
+  Serial.printf("[Clima] %.1f C, codigo WMO %d, %d dias de pronostico\n",
+                w.tempC, w.wmoCode, w.dailyCount);
   return true;
 }

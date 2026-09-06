@@ -169,6 +169,11 @@ static const char* OPENMETEO_URL = "https://api.open-meteo.com/v1/forecast";
 static const uint32_t NEWS_CACHE_MS    = 20UL * 60UL * 1000UL; // 20 min
 static const uint32_t WEATHER_CACHE_MS = 15UL * 60UL * 1000UL; // 15 min
 
+// Dias de pronostico extendido a pedir (incluye hoy). Viene en la MISMA
+// request que el clima actual, asi que pedir 5 en vez de 1 no cuesta una
+// llamada mas a la API; solo agranda un poco el JSON.
+static const int WEATHER_FORECAST_DAYS = 5;
+
 // Si una request falla, esperamos esto antes de reintentar (no martillar la API)
 static const uint32_t API_RETRY_MS = 60UL * 1000UL;
 
