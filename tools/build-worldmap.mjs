@@ -21,8 +21,8 @@ const SOURCE_URL =
 
 // 2:1 (equirectangular). Suficiente para reconocer continentes en una pantalla
 // de 240x320; mas resolucion no se nota y pesa mas flash.
-const W = 220;
-const H = 110;
+const W = 240;
+const H = 120;
 
 function pointInRing(x, y, ring) {
   // Ray casting estandar: cuenta cruces del rayo horizontal hacia +x.

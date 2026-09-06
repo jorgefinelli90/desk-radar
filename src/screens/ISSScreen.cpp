@@ -48,9 +48,8 @@ void ISSScreen::render(const ISSClient& iss) {
   const ISSPosition& p = iss.now();
 
   // --- Mapamundi con la ISS y casa marcadas -------------------------------
-  // Escalado entero (no 1:1) para que el bitmap de 220x110 llene el ancho de
-  // la pantalla: 240/220 no es entero, asi que se dibuja a razon 1 pixel de
-  // mapa -> 1 pixel de pantalla y se centra, en vez de escalar con huecos.
+  // El bitmap (240x120) se dibuja 1 pixel de mapa -> 1 pixel de pantalla, sin
+  // escalar: ocupa todo el ancho del display.
   const int mapX = (tft.width() - WORLD_MAP_W) / 2;
   const int mapY = 34;
 
@@ -63,7 +62,7 @@ void ISSScreen::render(const ISSClient& iss) {
         runStart = x;
       } else if (!land && runStart >= 0) {
         // Una linea horizontal por corrida de tierra: mucho mas rapido que un
-        // drawPixel por pixel (220x110 = 24200 posibles) sobre SPI.
+        // drawPixel por pixel (240x120 = 28800 posibles) sobre SPI.
         tft.drawFastHLine(mapX + runStart, mapY + y, x - runStart, TFT_DARKGREEN);
         runStart = -1;
       }
@@ -71,80 +70,11 @@ void ISSScreen::render(const ISSClient& iss) {
   }
   tft.drawRect(mapX, mapY, WORLD_MAP_W, WORLD_MAP_H, TFT_DARKGREY);
 
-  // Traza de la orbita: por donde vino (celeste) y hacia donde va (naranja).
-  // Una polilinea por tramo, cortada cuando el salto de longitud entre dos
-  // puntos consecutivos pasa los 180 grados: eso es un cruce del
-  // antimeridiano (+180/-180), no un desplazamiento real, y conectarlo
-  // dibujaria una linea atravesando toda la pantalla de punta a punta.
-  //
-  // drawWideLine (no drawLine) porque un trazo de 1px de un color parecido al
-  // oceano quedaba invisible en la práctica: se probó en la placa real con
-  // TFT_DARKCYAN y a simple vista, sobre TFT_NAVY, no se distinguia. Con
-  // TFT_CYAN (bien mas claro que el oceano) y 2px de ancho se ve incluso
-  // sobre tierra. Ademas se marca cada punto muestreado con un puntito: sin
-  // eso, en la placa real, una curva lisa de un solo color se leia como una
-  // mancha, no como una trayectoria real con datos detras.
-  static const float TRACK_WIDTH = 2.0f;
-  auto drawTrack = [&](const ISSTrackPoint* pts, int count, uint16_t color) {
-    for (int i = 0; i < count; i++) {
-      int x = worldX(pts[i].lon, mapX, WORLD_MAP_W);
-      int y = worldY(pts[i].lat, mapY, WORLD_MAP_H);
-      if (i + 1 < count && fabs(pts[i + 1].lon - pts[i].lon) <= 180.0) {
-        tft.drawWideLine(x, y, worldX(pts[i + 1].lon, mapX, WORLD_MAP_W),
-                          worldY(pts[i + 1].lat, mapY, WORLD_MAP_H), TRACK_WIDTH, color);
-      }
-      tft.fillCircle(x, y, 1, color);
-    }
-  };
-  drawTrack(iss.trackPast(), iss.trackPastCount(), TFT_CYAN);
-  drawTrack(iss.trackFuture(), iss.trackFutureCount(), TFT_ORANGE);
-
   // ISS: un punto grande, coloreado segun si esta a la luz del sol o en la
   // sombra de la Tierra. El punto puede salirse un pixel del recuadro sobre
-  // los bordes (px=0 o px=219): fillCircle lo recorta solo, no rompe nada.
+  // los bordes: fillCircle lo recorta solo, no rompe nada.
   int sx = worldX(p.lon, mapX, WORLD_MAP_W);
   int sy = worldY(p.lat, mapY, WORLD_MAP_H);
-
-  // Conecta la traza con la posicion en vivo (llegan de dos fetches
-  // distintos, no calzan al pixel exacto, pero a esta escala no se nota).
-  if (iss.trackPastCount() > 0) {
-    const ISSTrackPoint& last = iss.trackPast()[iss.trackPastCount() - 1];
-    if (fabs(p.lon - last.lon) <= 180.0) {
-      tft.drawWideLine(worldX(last.lon, mapX, WORLD_MAP_W), worldY(last.lat, mapY, WORLD_MAP_H), sx, sy,
-                        TRACK_WIDTH, TFT_CYAN);
-    }
-  }
-  if (iss.trackFutureCount() > 0) {
-    const ISSTrackPoint& first = iss.trackFuture()[0];
-    if (fabs(first.lon - p.lon) <= 180.0) {
-      tft.drawWideLine(sx, sy, worldX(first.lon, mapX, WORLD_MAP_W), worldY(first.lat, mapY, WORLD_MAP_H),
-                        TRACK_WIDTH, TFT_ORANGE);
-    }
-
-    // Flecha en la punta de "por venir": muestra el sentido del movimiento de
-    // un vistazo, no solo que "hay una linea ahi". Apunta en la direccion del
-    // ultimo tramo de la traza (o, si solo hay un punto futuro, desde la
-    // posicion actual).
-    const ISSTrackPoint& tip = iss.trackFuture()[iss.trackFutureCount() - 1];
-    int futureEndX = worldX(tip.lon, mapX, WORLD_MAP_W);
-    int futureEndY = worldY(tip.lat, mapY, WORLD_MAP_H);
-    int prevX = sx, prevY = sy;
-    if (iss.trackFutureCount() >= 2) {
-      const ISSTrackPoint& prev = iss.trackFuture()[iss.trackFutureCount() - 2];
-      prevX = worldX(prev.lon, mapX, WORLD_MAP_W);
-      prevY = worldY(prev.lat, mapY, WORLD_MAP_H);
-    }
-    float dx = futureEndX - prevX, dy = futureEndY - prevY;
-    float len = sqrtf(dx * dx + dy * dy);
-    if (len > 0.5f) {
-      dx /= len; dy /= len;
-      float px = -dy, py = dx; // perpendicular, para el ancho de la flecha
-      int baseX = futureEndX - (int)lroundf(dx * 6), baseY = futureEndY - (int)lroundf(dy * 6);
-      int leftX  = baseX + (int)lroundf(px * 3), leftY  = baseY + (int)lroundf(py * 3);
-      int rightX = baseX - (int)lroundf(px * 3), rightY = baseY - (int)lroundf(py * 3);
-      tft.fillTriangle(futureEndX, futureEndY, leftX, leftY, rightX, rightY, TFT_ORANGE);
-    }
-  }
 
   // Casa: una cruz chica, siempre en el mismo lugar del mapa.
   int hx = worldX(HOME_LON, mapX, WORLD_MAP_W);
@@ -158,18 +88,7 @@ void ISSScreen::render(const ISSClient& iss) {
 
   int y = mapY + WORLD_MAP_H + 6;
 
-  // Referencia de colores de la traza, debajo del mapa
-  tft.fillRect(mapX + 4, y, 8, 8, TFT_CYAN);
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(TFT_SILVER, TFT_BLACK);
-  tft.drawString("Recorrida", mapX + 16, y + 4, 1);
-
-  int futureX = mapX + WORLD_MAP_W / 2 + 6;
-  tft.fillRect(futureX, y, 8, 8, TFT_ORANGE);
-  tft.drawString("Por venir", futureX + 12, y + 4, 1);
-  y += 16;
-
-  // Estado de visibilidad, debajo de la referencia
+  // Estado de visibilidad, debajo del mapa
   tft.setTextDatum(MC_DATUM);
   const char* visTxt = (p.visibility == ISSVisibility::Daylight) ? "A la luz del sol"
                       : (p.visibility == ISSVisibility::Eclipsed) ? "En la sombra de la Tierra"
