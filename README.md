@@ -9,6 +9,30 @@ Además tiene una sección **Más info** con los titulares del día en Argentina
 ([GNews](https://gnews.io/)) y el clima actual de tu ubicación
 ([Open-Meteo](https://open-meteo.com/)).
 
+Se configura entero desde el navegador (sin recompilar) y se actualiza por
+WiFi una vez instalado — ver [Configuración inicial](#configuración-inicial)
+y [Actualizar por WiFi](#actualizar-por-wifi-ota).
+
+## Índice
+
+- [Hardware](#hardware)
+- [Wiring (confirmado)](#wiring-confirmado)
+- [Setup](#setup)
+- [Configuración inicial](#configuración-inicial)
+  - [Primer arranque: portal cautivo](#1-primer-arranque-portal-cautivo)
+  - [Después: desk-radar.local](#2-después-desk-radarlocal)
+  - [Mandar un mensaje a la pantalla](#3-mandar-un-mensaje-a-la-pantalla)
+  - [PIN del panel web](#pin-del-panel-web)
+  - [Resetear la configuración](#4-resetear-la-configuración)
+- [Cómo funciona](#cómo-funciona)
+- [Estructura actual del proyecto](#estructura-actual-del-proyecto)
+- [Mapa pre-renderizado](#mapa-pre-renderizado)
+- [APIs usadas](#apis-usadas)
+- [Notas de implementación](#notas-de-implementación)
+- [Actualizar por WiFi (OTA)](#actualizar-por-wifi-ota)
+- [Próximos pasos](#próximos-pasos-fuera-del-mvp)
+- [Licencia](#licencia)
+
 ## Hardware
 
 - ESP32 WROOM/WROVER (dual-core, placa dev estándar — **no** el LOLIN C3 Mini)
@@ -44,16 +68,21 @@ más ahí).
 > [Configuración inicial](#configuración-inicial).
 
 1. Instalá [PlatformIO](https://platformio.org/) (extensión de VS Code o CLI).
-2. *(Opcional, solo para desarrollar)* Copiá `include/secrets.h.example` a
+2. **Poné tu ubicación.** El repo trae la del autor a modo de ejemplo: abrí
+   `include/config.h` y cambiá `HOME_LAT`/`HOME_LON` por tu latitud/longitud
+   (Google Maps: click derecho sobre tu casa → copiar coordenadas). Es el
+   único dato que tenés que tocar antes de compilar.
+3. *(Opcional, solo para desarrollar)* Copiá `include/secrets.h.example` a
    `include/secrets.h` y completá tus datos. Si ese archivo existe, sus valores
    se precargan en NVS **una sola vez** en el primer arranque, para no tener que
    pasar por el portal cada vez que reflasheás. El dispositivo final no lo
    necesita para nada.
-3. Generá el mapa del modo Mapa (una sola vez, o cada vez que muevas el área):
+4. Generá el mapa del modo Mapa, ya centrado en tu ubicación (una sola vez, o
+   cada vez que la cambies):
    ```bash
    cd tools && npm install && node build-map.mjs && cd ..
    ```
-4. Conectá el ESP32 y subí el mapa y el firmware:
+5. Conectá el ESP32 y subí el mapa y el firmware:
    ```bash
    pio run -t uploadfs   # los mapas (data/*.bin) -> particion spiffs
    pio run -t upload     # el firmware
@@ -61,7 +90,7 @@ más ahí).
    ```
    El `uploadfs` va una sola vez; después alcanza con `upload` salvo que
    regeneres el mapa.
-5. Si la pantalla te queda cabeza abajo (depende de cómo montes el módulo),
+6. Si la pantalla te queda cabeza abajo (depende de cómo montes el módulo),
    cambiá `SCREEN_ROTATION` en `include/config.h`: `0` es vertical con el
    conector abajo y `2` es la misma vertical girada 180°. Al arrancar con un
    valor distinto al que ya estaba, el wizard de calibración táctil se vuelve
@@ -315,23 +344,25 @@ headers-puente: el único archivo suelto es `MapAssets.h`, que es generado.
 ```
 test/
 |-- test_geo/                     # GeoUtils (haversine, rumbo, bbox) y GeoMap
-`-- test_text/                    # TextUtils (UTF-8 a ASCII, recorte y wrap)
+`-- test_text/                    # TextUtils, StrUtils, AirportUtils y
+                                   # OpenSkyClient::nextBackoffMs
 ```
 
 Se corren **sobre la placa**, con el cable puesto:
 
 ```bash
-pio test -e esp32dev              # las dos suites
+pio test -e esp32dev              # las dos suites (53 tests)
 pio test -e esp32dev -f test_geo  # solo una
 ```
 
-Son las tres unidades que no tienen nada de hardware y donde un error no se ve
-en la pantalla: un avión dibujado 3 km corrido no tira ninguna excepción, sólo
+Son las unidades que no tienen nada de hardware y donde un error no se ve en
+la pantalla: un avión dibujado 3 km corrido no tira ninguna excepción, sólo
 aparece sobre la calle equivocada. Cubren los valores de referencia externos
 (un grado de latitud, antípodas), las distancias y rumbos reales a los tres
-aeropuertos, y la coherencia entre la proyección del firmware y el mapa
-generado: `test_la_casa_cae_en_el_centro_de_cada_mapa` falla si `MapAssets.h`
-y los `.bin` dejaron de ser del mismo lugar.
+aeropuertos, la coherencia entre la proyección del firmware y el mapa generado
+(`test_la_casa_cae_en_el_centro_de_cada_mapa` falla si `MapAssets.h` y los
+`.bin` dejaron de ser del mismo lugar), y la aritmética del backoff de
+OpenSky.
 
 Al terminar, la placa queda con el firmware de test: volvé a subir el real con
 `pio run -t upload`.
@@ -344,54 +375,6 @@ ningún error de compilación que lo explique. Y como eso compila **todo**
 `src/`, incluido `main.cpp`, su `setup()`/`loop()` chocan con los del test
 runner ("multiple definition") — de ahí el `#ifndef UNIT_TEST` que los rodea:
 `UNIT_TEST` es la macro que PlatformIO define solo al compilar para test.
-
-## Estructura anterior (referencia)
-
-```
-flight-radar-esp32/
-├── platformio.ini          # config de build, pines TFT, dependencias
-├── include/
-│   ├── config.h             # ubicación, aeropuertos, radios, tiempos
-│   ├── secrets.h.example    # plantilla de credenciales
-│   └── secrets.h            # tus credenciales reales (gitignored)
-├── src/
-│   ├── main.cpp                # loop principal, navegación táctil, refresco adaptativo
-│   ├── DeviceConfig.{h,cpp}    # credenciales en NVS + tabla de campos del formulario
-│   ├── WebPortal.{h,cpp}       # portal cautivo (AP) + dashboard web + mDNS
-│   ├── SettingsScreen.{h,cpp}  # pantalla AJUSTES + reset de WiFi con confirmación
-│   ├── Banner.{h,cpp}          # banner animado de mensajes
-│   ├── OpenSkyClient.{h,cpp}   # OAuth2 + fetch de /states/all
-│   ├── GeoUtils.h              # haversine, bearing, bounding box
-│   ├── DisplayManager.{h,cpp}  # init TFT + status bar
-│   ├── TouchManager.{h,cpp}    # calibración táctil persistente + detección de tap
-│   ├── HomeScreen.{h,cpp}      # menú principal con los cuatro botones
-│   ├── RadarScreen.{h,cpp}     # radar circular + hit-test de aviones
-│   ├── MapScreen.{h,cpp}       # mapa realista + aviones por altitud + zoom
-│   ├── MapTiles.{h,cpp}        # lectura del mapa raster desde LittleFS
-│   ├── GeoMap.h                # proyeccion Web Mercator lat/lon -> pixel
-│   ├── MapAssets.h             # GENERADO por build-map.mjs (no editar)
-│   ├── DetailScreen.{h,cpp}    # ficha de un avión tocado en el radar
-│   ├── AirportScreen.{h,cpp}   # dibujo de la lista por aeropuerto
-│   ├── InfoMenuScreen.{h,cpp}  # sub-menú "MÁS INFO" (Noticias / Clima)
-│   ├── NewsClient.{h,cpp}      # fetch de titulares en GNews + cache
-│   ├── NewsScreen.{h,cpp}      # lista de titulares
-│   ├── WeatherClient.{h,cpp}   # fetch de clima en Open-Meteo + cache
-│   ├── WeatherScreen.{h,cpp}   # clima actual + íconos dibujados a mano
-│   ├── TextUtils.h             # UTF-8 → ASCII, recorte y wrap por ancho
-│   └── UiRect.h                # helper de hit-testing para zonas táctiles
-├── data/                    # se sube con "pio run -t uploadfs", no con el firmware
-│   ├── map80.bin            # mapa 80 km, RGB565 crudo (GENERADO)
-│   ├── map40.bin            # mapa 40 km, RGB565 crudo (GENERADO)
-│   └── radar.bin            # fondo del radar, 4 bpp indexado (GENERADO)
-├── tools/
-│   ├── build-map.mjs        # baja los tiles y genera los .bin + MapAssets.h
-│   └── verify-map.mjs       # marca puntos conocidos para validar la proyección
-└── README.md
-```
-
-La implementación ya está organizada por módulos dentro de `src/`:
-`app/`, `core/`, `models/`, `screens/`, `services/` y `utils/`, y los `#include`
-apuntan directo a esas rutas.
 
 ## Mapa pre-renderizado
 
@@ -413,8 +396,9 @@ pio run -t upload      # sube el firmware
 Mirá `tools/preview80.png` y `preview40.png` antes de flashear: es exactamente
 lo que va a verse en la pantalla.
 
-**Para mover el área**, cambiá `HOME_LAT`/`HOME_LON` arriba de `build-map.mjs`
-(y en `include/config.h`, que tienen que coincidir) y volvé a correrlo.
+**Para mover el área**, cambiá `HOME_LAT`/`HOME_LON` en `include/config.h` (es
+la única fuente de verdad: `build-map.mjs` los lee de ahí) y volvé a correr el
+generador.
 
 ### Por qué pre-renderizado y no tiles en vivo
 
@@ -429,8 +413,7 @@ Como el área es fija, todo el trabajo pesado (bajar, pegar, recortar, reducir)
 se hace en la PC y el ESP32 solo hace `pushImage`.
 
 Cada `.bin` son 240 × 262 × 2 = **125.760 bytes**; los dos suman 251 KB de la
-partición `spiffs` de 1,375 MB, que hasta ahora estaba totalmente vacía. No hace
-falta cambiar el esquema de particiones.
+partición `spiffs` de 896 KB (ver [Particiones](#particiones)).
 
 ### El mapa de fondo del radar
 
@@ -533,7 +516,7 @@ están en RAM.
 
 | Pantalla | API | ¿API key? | Free tier |
 |---|---|---|---|
-| Radar / Mapa / Aeropuertos | [OpenSky Network](https://opensky-network.org/) | OAuth2 client id + secret | gratis para uso personal |
+| Radar / Mapa / Aeropuertos / Detalle | [OpenSky Network](https://opensky-network.org/) | OAuth2 client id + secret | gratis para uso personal |
 | Noticias | [GNews.io](https://gnews.io/) | sí (`GNEWS_API_KEY`) | 100 requests/día, **sin tarjeta de crédito** |
 | Clima | [Open-Meteo](https://open-meteo.com/) | **no hace falta** | libre para uso no comercial |
 
@@ -992,3 +975,12 @@ del payload salen por el monitor serie.
   piden zonas solapadas (Noticias y Clima ya cachean).
 - Pronóstico extendido en la pantalla de Clima: Open-Meteo devuelve los
   próximos días en la misma request, solo falta dibujarlos.
+
+## Licencia
+
+El código es [MIT](LICENSE): usalo, modificalo, hacé lo que quieras.
+
+Eso no cubre los datos de terceros que el proyecto consume, que tienen sus
+propios términos: los tiles del mapa son © Esri y colaboradores (ver
+[Atribución](#atribución)), y los datos de OpenSky, GNews y Open-Meteo se usan
+bajo las condiciones de cada API (ver [APIs usadas](#apis-usadas)).
