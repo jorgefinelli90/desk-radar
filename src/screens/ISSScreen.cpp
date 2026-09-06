@@ -1,6 +1,26 @@
 #include "screens/ISSScreen.h"
 #include "config.h"
 #include "utils/GeoUtils.h"
+#include "models/WorldMapAsset.h"
+
+// Mismo mapa que usa el bitmap: proyeccion equirectangular, x = longitud
+// lineal, y = latitud lineal. No es la proyeccion de GeoMap.h (esa es Web
+// Mercator, para el mapa local de alta resolucion): a esta escala, del
+// planeta entero, Mercator estira los polos hasta el infinito y no vale la
+// pena; equirectangular alcanza para "en que continente/oceano esta".
+static int worldX(double lon, int mapX, int mapW) {
+  return mapX + (int)((lon + 180.0) / 360.0 * mapW);
+}
+static int worldY(double lat, int mapY, int mapH) {
+  return mapY + (int)((90.0 - lat) / 180.0 * mapH);
+}
+
+static bool isLand(int px, int py) {
+  if (px < 0 || px >= WORLD_MAP_W || py < 0 || py >= WORLD_MAP_H) return false;
+  int byteIdx = py * WORLD_MAP_ROW_BYTES + (px >> 3);
+  int bitIdx = 7 - (px & 7);
+  return (WORLD_MAP_BITS[byteIdx] >> bitIdx) & 1;
+}
 
 void ISSScreen::render(const ISSClient& iss) {
   TFT_eSPI& tft = _display.tft();
@@ -26,57 +46,78 @@ void ISSScreen::render(const ISSClient& iss) {
 
   const ISSPosition& p = iss.now();
 
-  // Encabezado: nombre + estado de visibilidad (dia/noche orbital)
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString("ESTACION ESPACIAL INTERNACIONAL", tft.width() / 2, 46, 2);
+  // --- Mapamundi con la ISS y casa marcadas -------------------------------
+  // Escalado entero (no 1:1) para que el bitmap de 220x110 llene el ancho de
+  // la pantalla: 240/220 no es entero, asi que se dibuja a razon 1 pixel de
+  // mapa -> 1 pixel de pantalla y se centra, en vez de escalar con huecos.
+  const int mapX = (tft.width() - WORLD_MAP_W) / 2;
+  const int mapY = 34;
 
+  tft.fillRect(mapX, mapY, WORLD_MAP_W, WORLD_MAP_H, TFT_NAVY); // oceano
+  for (int y = 0; y < WORLD_MAP_H; y++) {
+    int runStart = -1;
+    for (int x = 0; x <= WORLD_MAP_W; x++) {
+      bool land = (x < WORLD_MAP_W) && isLand(x, y);
+      if (land && runStart < 0) {
+        runStart = x;
+      } else if (!land && runStart >= 0) {
+        // Una linea horizontal por corrida de tierra: mucho mas rapido que un
+        // drawPixel por pixel (220x110 = 24200 posibles) sobre SPI.
+        tft.drawFastHLine(mapX + runStart, mapY + y, x - runStart, TFT_DARKGREEN);
+        runStart = -1;
+      }
+    }
+  }
+  tft.drawRect(mapX, mapY, WORLD_MAP_W, WORLD_MAP_H, TFT_DARKGREY);
+
+  // Casa: una cruz chica, siempre en el mismo lugar del mapa.
+  int hx = worldX(HOME_LON, mapX, WORLD_MAP_W);
+  int hy = worldY(HOME_LAT, mapY, WORLD_MAP_H);
+  tft.drawLine(hx - 3, hy, hx + 3, hy, TFT_WHITE);
+  tft.drawLine(hx, hy - 3, hx, hy + 3, TFT_WHITE);
+
+  // ISS: un punto grande, coloreado segun si esta a la luz del sol o en la
+  // sombra de la Tierra. El punto puede salirse un pixel del recuadro sobre
+  // los bordes (px=0 o px=219): fillCircle lo recorta solo, no rompe nada.
+  int sx = worldX(p.lon, mapX, WORLD_MAP_W);
+  int sy = worldY(p.lat, mapY, WORLD_MAP_H);
+  uint16_t issColor = (p.visibility == ISSVisibility::Eclipsed) ? TFT_SKYBLUE : TFT_YELLOW;
+  tft.drawCircle(sx, sy, 5, TFT_WHITE);
+  tft.fillCircle(sx, sy, 3, issColor);
+
+  int y = mapY + WORLD_MAP_H + 10;
+
+  // Estado de visibilidad, debajo del mapa
+  tft.setTextDatum(MC_DATUM);
   const char* visTxt = (p.visibility == ISSVisibility::Daylight) ? "A la luz del sol"
                       : (p.visibility == ISSVisibility::Eclipsed) ? "En la sombra de la Tierra"
                       : "Visibilidad desconocida";
-  uint16_t visColor = (p.visibility == ISSVisibility::Daylight) ? TFT_YELLOW
-                     : (p.visibility == ISSVisibility::Eclipsed) ? TFT_NAVY
-                     : TFT_DARKGREY;
-  tft.setTextColor(visColor, TFT_BLACK);
-  tft.drawString(visTxt, tft.width() / 2, 68, 1);
+  tft.setTextColor(issColor, TFT_BLACK);
+  tft.drawString(visTxt, tft.width() / 2, y, 1);
+  y += 14;
 
-  // Icono simple: un circulito (la Tierra) con un punto orbitando (la ISS),
-  // ubicado segun el rumbo desde casa. Nada de bitmaps, como el resto de las
-  // pantallas.
-  int cx = tft.width() / 2;
-  int cy = 116;
-  int r  = 30;
-  tft.drawCircle(cx, cy, r, TFT_DARKGREEN);
-  double rad = GeoUtils::toRad(p.bearingDeg);
-  int sx = cx + (int)(r * sin(rad));
-  int sy = cy - (int)(r * cos(rad));
-  tft.fillCircle(sx, sy, 4, TFT_WHITE);
-  tft.drawLine(cx, cy, sx, sy, TFT_DARKGREY);
-
-  tft.drawFastHLine(10, 160, tft.width() - 20, TFT_DARKGREEN);
+  tft.drawFastHLine(10, y, tft.width() - 20, TFT_DARKGREEN);
+  y += 12;
 
   // Filas de datos, mismo estilo que DetailScreen
-  int y = 172;
-  const int rowH = 30;
+  const int rowH = 26;
   char buf[40];
 
   auto row = [&](const char* label, const String& value, uint16_t valueColor) {
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
-    tft.drawString(label, 14, y + 6, 2);
+    tft.drawString(label, 14, y + 4, 2);
 
     tft.setTextDatum(TR_DATUM);
     tft.setTextColor(valueColor, TFT_BLACK);
-    tft.drawString(value, tft.width() - 14, y + 4, 2);
+    tft.drawString(value, tft.width() - 14, y + 2, 2);
 
     y += rowH;
   };
 
-  snprintf(buf, sizeof(buf), "%.0f km", p.distanceKm);
+  snprintf(buf, sizeof(buf), "%.0f km  %s (%.0f)", p.distanceKm,
+           GeoUtils::cardinal(p.bearingDeg), p.bearingDeg);
   row("Distancia", buf, TFT_WHITE);
-
-  snprintf(buf, sizeof(buf), "%s  (%.0f)", GeoUtils::cardinal(p.bearingDeg), p.bearingDeg);
-  row("Rumbo", buf, TFT_WHITE);
 
   snprintf(buf, sizeof(buf), "%.0f km", p.altitudeKm);
   row("Altura orbital", buf, TFT_WHITE);

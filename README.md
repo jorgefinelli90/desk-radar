@@ -292,13 +292,19 @@ a `0`.
   Tocá la pantalla para el **pronóstico extendido** (hasta 5 días, hoy
   incluido): día, condición y máxima/mínima. Viene en la misma request que el
   clima actual, así que no cuesta una llamada más a la API.
-- **Pantalla ISS**: distancia y rumbo cardinal desde `HOME_LAT`/`HOME_LON`
-  hasta la posición actual de la Estación Espacial Internacional, altura
-  orbital, velocidad y si está a la luz del sol o en la sombra de la Tierra
-  (`wheretheiss.at`, sin API key). Un puntito orbitando un círculo muestra el
-  rumbo de un vistazo. La ISS da la vuelta al planeta en ~90 minutos (unos
-  27.600 km/h), así que el cache es de apenas 10 segundos: mucho más y el
-  dato mostrado ya no coincide ni de cerca con la posición real.
+- **Pantalla ISS**: un mapamundi en miniatura con un punto amarillo (celeste
+  si está eclipsada, sin luz solar directa) marcando dónde está la Estación
+  Espacial Internacional ahora mismo, y una cruz blanca fija marcando tu casa
+  — de un vistazo se ve si está sobre el Pacífico, África, encima tuyo o del
+  otro lado del planeta. El contorno de los continentes es un bitmap de 220x110
+  generado una sola vez con `tools/build-worldmap.mjs` a partir de datos
+  públicos de Natural Earth y compilado directo al firmware (no se descarga
+  nada en tiempo de ejecución). Debajo, en texto: distancia y rumbo cardinal
+  desde `HOME_LAT`/`HOME_LON`, altura orbital, velocidad y si está a la luz
+  del sol o en la sombra de la Tierra (`wheretheiss.at`, sin API key). La ISS
+  da la vuelta al planeta en ~90 minutos (unos 27.600 km/h), así que el cache
+  es de apenas 10 segundos: mucho más y el dato mostrado ya no coincide ni de
+  cerca con la posición real.
 - **Cache**: noticias, clima e ISS se guardan en RAM y no se vuelven a pedir
   mientras el cache siga vigente (20, 15 y 0.17 minutos respectivamente, en
   `config.h`). Si una request falla, se reintenta recién al minuto en vez de
@@ -338,7 +344,8 @@ src/
 |   `-- WebPortal.{h,cpp}        # portal cautivo, dashboard y mDNS
 |-- models/
 |   |-- AircraftBlip.h           # modelo de aeronave
-|   `-- UiRect.h                 # rectangulo para hit-testing
+|   |-- UiRect.h                 # rectangulo para hit-testing
+|   `-- WorldMapAsset.h          # bitmap del mapamundi, generado (ver Pantalla ISS)
 |-- screens/
 |   |-- AirportScreen.{h,cpp}
 |   |-- DetailScreen.{h,cpp}
