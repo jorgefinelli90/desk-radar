@@ -71,20 +71,27 @@ void ISSScreen::render(const ISSClient& iss) {
   }
   tft.drawRect(mapX, mapY, WORLD_MAP_W, WORLD_MAP_H, TFT_DARKGREY);
 
-  // Traza de la orbita: por donde vino (apagado) y hacia donde va (vivo).
+  // Traza de la orbita: por donde vino (celeste) y hacia donde va (naranja).
   // Una polilinea por tramo, cortada cuando el salto de longitud entre dos
   // puntos consecutivos pasa los 180 grados: eso es un cruce del
   // antimeridiano (+180/-180), no un desplazamiento real, y conectarlo
   // dibujaria una linea atravesando toda la pantalla de punta a punta.
+  //
+  // drawWideLine (no drawLine) porque un trazo de 1px de un color parecido al
+  // oceano quedaba invisible en la práctica: se probó en la placa real con
+  // TFT_DARKCYAN y a simple vista, sobre TFT_NAVY, no se distinguia. Con
+  // TFT_CYAN (bien mas claro que el oceano) y 1.6px de ancho se ve incluso
+  // sobre tierra.
+  static const float TRACK_WIDTH = 1.6f;
   auto drawTrack = [&](const ISSTrackPoint* pts, int count, uint16_t color) {
     for (int i = 0; i + 1 < count; i++) {
       if (fabs(pts[i + 1].lon - pts[i].lon) > 180.0) continue;
-      tft.drawLine(worldX(pts[i].lon, mapX, WORLD_MAP_W), worldY(pts[i].lat, mapY, WORLD_MAP_H),
-                   worldX(pts[i + 1].lon, mapX, WORLD_MAP_W), worldY(pts[i + 1].lat, mapY, WORLD_MAP_H),
-                   color);
+      tft.drawWideLine(worldX(pts[i].lon, mapX, WORLD_MAP_W), worldY(pts[i].lat, mapY, WORLD_MAP_H),
+                        worldX(pts[i + 1].lon, mapX, WORLD_MAP_W), worldY(pts[i + 1].lat, mapY, WORLD_MAP_H),
+                        TRACK_WIDTH, color);
     }
   };
-  drawTrack(iss.trackPast(), iss.trackPastCount(), TFT_DARKCYAN);
+  drawTrack(iss.trackPast(), iss.trackPastCount(), TFT_CYAN);
   drawTrack(iss.trackFuture(), iss.trackFutureCount(), TFT_ORANGE);
 
   // ISS: un punto grande, coloreado segun si esta a la luz del sol o en la
@@ -98,13 +105,15 @@ void ISSScreen::render(const ISSClient& iss) {
   if (iss.trackPastCount() > 0) {
     const ISSTrackPoint& last = iss.trackPast()[iss.trackPastCount() - 1];
     if (fabs(p.lon - last.lon) <= 180.0) {
-      tft.drawLine(worldX(last.lon, mapX, WORLD_MAP_W), worldY(last.lat, mapY, WORLD_MAP_H), sx, sy, TFT_DARKCYAN);
+      tft.drawWideLine(worldX(last.lon, mapX, WORLD_MAP_W), worldY(last.lat, mapY, WORLD_MAP_H), sx, sy,
+                        TRACK_WIDTH, TFT_CYAN);
     }
   }
   if (iss.trackFutureCount() > 0) {
     const ISSTrackPoint& first = iss.trackFuture()[0];
     if (fabs(first.lon - p.lon) <= 180.0) {
-      tft.drawLine(sx, sy, worldX(first.lon, mapX, WORLD_MAP_W), worldY(first.lat, mapY, WORLD_MAP_H), TFT_ORANGE);
+      tft.drawWideLine(sx, sy, worldX(first.lon, mapX, WORLD_MAP_W), worldY(first.lat, mapY, WORLD_MAP_H),
+                        TRACK_WIDTH, TFT_ORANGE);
     }
   }
 
@@ -121,7 +130,7 @@ void ISSScreen::render(const ISSClient& iss) {
   int y = mapY + WORLD_MAP_H + 6;
 
   // Referencia de colores de la traza, debajo del mapa
-  tft.fillRect(mapX + 4, y, 8, 8, TFT_DARKCYAN);
+  tft.fillRect(mapX + 4, y, 8, 8, TFT_CYAN);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_SILVER, TFT_BLACK);
   tft.drawString("Recorrida", mapX + 16, y + 4, 1);

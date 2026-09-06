@@ -88,10 +88,19 @@ más ahí).
 > [Configuración inicial](#configuración-inicial).
 
 1. Instalá [PlatformIO](https://platformio.org/) (extensión de VS Code o CLI).
-2. **Poné tu ubicación.** El repo trae la del autor a modo de ejemplo: abrí
-   `include/config.h` y cambiá `HOME_LAT`/`HOME_LON` por tu latitud/longitud
-   (Google Maps: click derecho sobre tu casa → copiar coordenadas). Es el
-   único dato que tenés que tocar antes de compilar.
+2. **Poné tu ubicación.** El repo trae la del autor a modo de ejemplo. Es el
+   único dato que tenés que tocar antes de compilar, y hay dos formas:
+   - **A mano** (exacta): abrí `include/config.h` y cambiá `HOME_LAT`/`HOME_LON`
+     por tu latitud/longitud (Google Maps: click derecho sobre tu casa → copiar
+     coordenadas).
+   - **Automática** (aproximada, sin buscar nada): corré
+     `node tools/detect-location.mjs` para ver qué ubicación detecta por tu IP
+     antes de tocar nada, y `node tools/detect-location.mjs --write` para que la
+     escriba directo en `include/config.h`. La geolocalización por IP acierta la
+     ciudad, no la dirección exacta —puede estar a varios km de tu casa real,
+     más todavía con datos móviles o VPN—; para el radar alcanza de sobra, pero
+     si te importa que el mapa quede centrado justo en tu techo, después
+     conviene afinarla a mano con el método de arriba.
 3. *(Opcional, solo para desarrollar)* Copiá `include/secrets.h.example` a
    `include/secrets.h` y completá tus datos. Si ese archivo existe, sus valores
    se precargan en NVS **una sola vez** en el primer arranque, para no tener que
@@ -445,8 +454,9 @@ Mirá `tools/preview80.png` y `preview40.png` antes de flashear: es exactamente
 lo que va a verse en la pantalla.
 
 **Para mover el área**, cambiá `HOME_LAT`/`HOME_LON` en `include/config.h` (es
-la única fuente de verdad: `build-map.mjs` los lee de ahí) y volvé a correr el
-generador.
+la única fuente de verdad: `build-map.mjs` los lee de ahí) —a mano o con
+`node tools/detect-location.mjs --write` (ver [Setup](#setup))— y volvé a
+correr el generador.
 
 ### Por qué pre-renderizado y no tiles en vivo
 
