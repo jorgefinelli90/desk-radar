@@ -186,6 +186,16 @@ static const int WEATHER_FORECAST_DAYS = 5;
 // menos vale la pena guardarlo.
 static const uint32_t ISS_CACHE_MS = 10UL * 1000UL; // 10 s
 
+// --- Traza de la orbita de la ISS (pasado y futuro) ---
+// wheretheiss.at puede predecir/reconstruir posiciones para timestamps
+// arbitrarios (propaga el TLE guardado del lado del servidor), asi que la
+// "traza" no es mas que pedir varios puntos alrededor de ahora. A diferencia
+// de la posicion puntual, la forma de la orbita casi no cambia en minutos (la
+// Tierra rota ~1.25 grados cada 5 min), asi que se pide mucho menos seguido.
+static const int      ISS_TRACK_HALF     = 9;                  // puntos a cada lado de "ahora"
+static const uint32_t ISS_TRACK_STEP_S   = 300;                // 5 min entre puntos (~45 min a cada lado)
+static const uint32_t ISS_TRACK_CACHE_MS = 5UL * 60UL * 1000UL; // 5 min
+
 // Si una request falla, esperamos esto antes de reintentar (no martillar la API)
 static const uint32_t API_RETRY_MS = 60UL * 1000UL;
 

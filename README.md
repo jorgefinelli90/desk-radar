@@ -299,12 +299,17 @@ a `0`.
   otro lado del planeta. El contorno de los continentes es un bitmap de 220x110
   generado una sola vez con `tools/build-worldmap.mjs` a partir de datos
   públicos de Natural Earth y compilado directo al firmware (no se descarga
-  nada en tiempo de ejecución). Debajo, en texto: distancia y rumbo cardinal
-  desde `HOME_LAT`/`HOME_LON`, altura orbital, velocidad y si está a la luz
-  del sol o en la sombra de la Tierra (`wheretheiss.at`, sin API key). La ISS
-  da la vuelta al planeta en ~90 minutos (unos 27.600 km/h), así que el cache
-  es de apenas 10 segundos: mucho más y el dato mostrado ya no coincide ni de
-  cerca con la posición real.
+  nada en tiempo de ejecución). Sobre el mapa también se dibuja la **traza de
+  la órbita**: por dónde pasó (línea celeste apagada) y hacia dónde va (línea
+  naranja) en los ~45 minutos a cada lado del momento actual —
+  `wheretheiss.at` puede reconstruir posiciones pasadas y predecir futuras a
+  partir del TLE que tiene guardado, así que alcanza con pedirle varios
+  timestamps a la vez—. Esa traza cambia poco en minutos, así que se
+  refresca cada 5 en vez de junto con la posición puntual. Debajo del mapa,
+  en texto: distancia y rumbo cardinal desde `HOME_LAT`/`HOME_LON`, altura
+  orbital, velocidad y si está a la luz del sol o en la sombra de la Tierra.
+  La posición puntual sí se pide cada 10 segundos: a ~27.600 km/h un dato con
+  más de eso ya no coincide ni de cerca con la posición real.
 - **Cache**: noticias, clima e ISS se guardan en RAM y no se vuelven a pedir
   mientras el cache siga vigente (20, 15 y 0.17 minutos respectivamente, en
   `config.h`). Si una request falla, se reintenta recién al minuto en vez de

@@ -2,6 +2,7 @@
 #include "config.h"
 #include "utils/GeoUtils.h"
 #include "models/WorldMapAsset.h"
+#include <math.h>
 
 // Mismo mapa que usa el bitmap: proyeccion equirectangular, x = longitud
 // lineal, y = latitud lineal. No es la proyeccion de GeoMap.h (esa es Web
@@ -70,24 +71,67 @@ void ISSScreen::render(const ISSClient& iss) {
   }
   tft.drawRect(mapX, mapY, WORLD_MAP_W, WORLD_MAP_H, TFT_DARKGREY);
 
-  // Casa: una cruz chica, siempre en el mismo lugar del mapa.
-  int hx = worldX(HOME_LON, mapX, WORLD_MAP_W);
-  int hy = worldY(HOME_LAT, mapY, WORLD_MAP_H);
-  tft.drawLine(hx - 3, hy, hx + 3, hy, TFT_WHITE);
-  tft.drawLine(hx, hy - 3, hx, hy + 3, TFT_WHITE);
+  // Traza de la orbita: por donde vino (apagado) y hacia donde va (vivo).
+  // Una polilinea por tramo, cortada cuando el salto de longitud entre dos
+  // puntos consecutivos pasa los 180 grados: eso es un cruce del
+  // antimeridiano (+180/-180), no un desplazamiento real, y conectarlo
+  // dibujaria una linea atravesando toda la pantalla de punta a punta.
+  auto drawTrack = [&](const ISSTrackPoint* pts, int count, uint16_t color) {
+    for (int i = 0; i + 1 < count; i++) {
+      if (fabs(pts[i + 1].lon - pts[i].lon) > 180.0) continue;
+      tft.drawLine(worldX(pts[i].lon, mapX, WORLD_MAP_W), worldY(pts[i].lat, mapY, WORLD_MAP_H),
+                   worldX(pts[i + 1].lon, mapX, WORLD_MAP_W), worldY(pts[i + 1].lat, mapY, WORLD_MAP_H),
+                   color);
+    }
+  };
+  drawTrack(iss.trackPast(), iss.trackPastCount(), TFT_DARKCYAN);
+  drawTrack(iss.trackFuture(), iss.trackFutureCount(), TFT_ORANGE);
 
   // ISS: un punto grande, coloreado segun si esta a la luz del sol o en la
   // sombra de la Tierra. El punto puede salirse un pixel del recuadro sobre
   // los bordes (px=0 o px=219): fillCircle lo recorta solo, no rompe nada.
   int sx = worldX(p.lon, mapX, WORLD_MAP_W);
   int sy = worldY(p.lat, mapY, WORLD_MAP_H);
+
+  // Conecta la traza con la posicion en vivo (llegan de dos fetches
+  // distintos, no calzan al pixel exacto, pero a esta escala no se nota).
+  if (iss.trackPastCount() > 0) {
+    const ISSTrackPoint& last = iss.trackPast()[iss.trackPastCount() - 1];
+    if (fabs(p.lon - last.lon) <= 180.0) {
+      tft.drawLine(worldX(last.lon, mapX, WORLD_MAP_W), worldY(last.lat, mapY, WORLD_MAP_H), sx, sy, TFT_DARKCYAN);
+    }
+  }
+  if (iss.trackFutureCount() > 0) {
+    const ISSTrackPoint& first = iss.trackFuture()[0];
+    if (fabs(first.lon - p.lon) <= 180.0) {
+      tft.drawLine(sx, sy, worldX(first.lon, mapX, WORLD_MAP_W), worldY(first.lat, mapY, WORLD_MAP_H), TFT_ORANGE);
+    }
+  }
+
+  // Casa: una cruz chica, siempre en el mismo lugar del mapa.
+  int hx = worldX(HOME_LON, mapX, WORLD_MAP_W);
+  int hy = worldY(HOME_LAT, mapY, WORLD_MAP_H);
+  tft.drawLine(hx - 3, hy, hx + 3, hy, TFT_WHITE);
+  tft.drawLine(hx, hy - 3, hx, hy + 3, TFT_WHITE);
+
   uint16_t issColor = (p.visibility == ISSVisibility::Eclipsed) ? TFT_SKYBLUE : TFT_YELLOW;
   tft.drawCircle(sx, sy, 5, TFT_WHITE);
   tft.fillCircle(sx, sy, 3, issColor);
 
-  int y = mapY + WORLD_MAP_H + 10;
+  int y = mapY + WORLD_MAP_H + 6;
 
-  // Estado de visibilidad, debajo del mapa
+  // Referencia de colores de la traza, debajo del mapa
+  tft.fillRect(mapX + 4, y, 8, 8, TFT_DARKCYAN);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_SILVER, TFT_BLACK);
+  tft.drawString("Recorrida", mapX + 16, y + 4, 1);
+
+  int futureX = mapX + WORLD_MAP_W / 2 + 6;
+  tft.fillRect(futureX, y, 8, 8, TFT_ORANGE);
+  tft.drawString("Por venir", futureX + 12, y + 4, 1);
+  y += 16;
+
+  // Estado de visibilidad, debajo de la referencia
   tft.setTextDatum(MC_DATUM);
   const char* visTxt = (p.visibility == ISSVisibility::Daylight) ? "A la luz del sol"
                       : (p.visibility == ISSVisibility::Eclipsed) ? "En la sombra de la Tierra"
