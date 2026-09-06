@@ -87,13 +87,6 @@ static const int AIRPORT_COUNT = sizeof(AIRPORTS) / sizeof(AIRPORTS[0]);
 // Altitud máxima (metros) para considerar un avión "operando cerca" del aeropuerto
 static const double AIRPORT_MAX_ALT_M = 3000.0;
 
-// --- Botón físico ---
-// GPIO27 elegido por estar libre: no choca con el bus SPI de la pantalla/touch
-// (2,4,5,15,18,19,21,23,17) ni con los pines de flash interna (6-11) ni con
-// pines de arranque (0,12).
-static const int PIN_BUTTON = 27;
-static const uint32_t LONG_PRESS_MS = 600;
-
 // --- OpenSky API ---
 static const char* OPENSKY_TOKEN_URL  = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 static const char* OPENSKY_STATES_URL = "https://opensky-network.org/api/states/all";
